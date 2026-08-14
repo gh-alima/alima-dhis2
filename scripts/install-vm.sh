@@ -65,12 +65,39 @@ JSON
 systemctl restart docker
 ok "Rotation des journaux de conteneurs configurée"
 
-# ── 3. Authentification au registre ──────────────────────────────────────────
+# ── 3. Google Cloud CLI ──────────────────────────────────────────────────────
+# Indispensable sur la VM, et pas seulement pour l'installation : render-env.sh
+# l'utilise à CHAQUE déploiement pour lire les secrets. Les images Ubuntu de
+# Compute Engine ne l'embarquent pas systématiquement.
+log "Google Cloud CLI"
+if command -v gcloud >/dev/null 2>&1; then
+  ok "gcloud déjà présent ($(gcloud --version 2>/dev/null | head -1))"
+else
+  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+    | gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+    > /etc/apt/sources.list.d/google-cloud-sdk.list
+  apt-get update -qq
+  apt-get install -y -qq google-cloud-cli
+  ok "gcloud installé ($(gcloud --version 2>/dev/null | head -1))"
+fi
+
+# Vérifie que le compte de service de la VM peut effectivement lire un secret :
+# sans ce droit, chaque déploiement échouerait à la génération du .env.
+if gcloud secrets versions access latest --secret=dhis2-db-host >/dev/null 2>&1; then
+  ok "Accès aux secrets vérifié"
+else
+  echo "  ⚠ Lecture du secret dhis2-db-host impossible." >&2
+  echo "    Vérifier que la VM tourne bien sous sa-dhis2-vm et que ce compte" >&2
+  echo "    porte le rôle roles/secretmanager.secretAccessor." >&2
+fi
+
+# ── 4. Authentification au registre ──────────────────────────────────────────
 log "Authentification Artifact Registry"
 gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
 ok "Docker authentifié auprès d'Artifact Registry"
 
-# ── 4. Volumes de persistance ────────────────────────────────────────────────
+# ── 5. Volumes de persistance ────────────────────────────────────────────────
 # Créés explicitement ici plutôt que laissés à docker compose : on veut qu'ils
 # existent avant le premier déploiement et qu'ils survivent à un
 # « docker compose down -v » malencontreux sur les autres ressources.
@@ -93,13 +120,13 @@ cat <<'WARN'
 
 WARN
 
-# ── 5. Arborescence applicative ──────────────────────────────────────────────
+# ── 6. Arborescence applicative ──────────────────────────────────────────────
 log "Arborescence applicative"
 mkdir -p "${APP_DIR}/scripts" /var/www/certbot
 chmod 750 "${APP_DIR}"
 ok "${APP_DIR} prêt"
 
-# ── 6. Certificat TLS ────────────────────────────────────────────────────────
+# ── 7. Certificat TLS ────────────────────────────────────────────────────────
 # Nginx refuse de démarrer si les certificats sont absents : ils doivent être
 # obtenus AVANT le premier déploiement.
 log "Certificat TLS"
@@ -152,7 +179,7 @@ systemctl daemon-reload
 systemctl enable --now certbot-renew.timer
 ok "Renouvellement TLS automatique activé"
 
-# ── 7. Agent Ops ─────────────────────────────────────────────────────────────
+# ── 8. Agent Ops ─────────────────────────────────────────────────────────────
 # DHIS2 abandonne progressivement la journalisation vers la sortie standard :
 # les journaux applicatifs se lisent sous DHIS2_HOME/logs, donc dans le volume
 # dhis2-logs. L'agent Ops les collecte directement à cet emplacement.

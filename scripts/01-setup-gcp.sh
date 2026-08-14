@@ -423,6 +423,12 @@ run gcloud compute disks add-resource-policies "${VM_NAME}" \
   --zone="${ZONE}" --resource-policies=snap-dhis2-daily 2>/dev/null || true
 
 # ── Récapitulatif ────────────────────────────────────────────────────────────
+# Un enregistrement DNS de type A porte un nom d'hôte, pas une URL : on retire
+# le schéma et tout chemin éventuel de DHIS2_FQDN.
+DHIS2_HOSTNAME="${DHIS2_FQDN:-https://dhis2.alima.ngo}"
+DHIS2_HOSTNAME="${DHIS2_HOSTNAME#*://}"
+DHIS2_HOSTNAME="${DHIS2_HOSTNAME%%/*}"
+
 log "Provisionnement terminé"
 cat <<EOF
 
@@ -438,7 +444,7 @@ cat <<EOF
   ----------------
   1. ENREGISTREMENT DNS — à faire en premier, tout le reste en dépend :
 
-       ${DHIS2_FQDN:-https://dhis2.alima.ngo}  ──▶  ${VM_IP}
+       Enregistrement A :  ${DHIS2_HOSTNAME}  ──▶  ${VM_IP}
 
      Créer un enregistrement A pointant vers cette adresse, puis attendre la
      propagation. Vérifier avant de continuer :
