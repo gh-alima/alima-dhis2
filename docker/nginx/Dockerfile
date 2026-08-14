@@ -28,7 +28,20 @@ RUN rm -f /etc/nginx/conf.d/default.conf \
 
 COPY nginx.conf /etc/nginx/nginx.conf
 
-USER nginx
+# Pas de « USER nginx » ici — c'est le modèle à deux niveaux de Nginx qui est
+# conservé : le processus MAÎTRE s'exécute en root, les WORKERS sous nginx
+# (directive « user nginx; » dans nginx.conf).
+#
+# Le maître doit lire le certificat au démarrage. Or certbot place ses
+# répertoires live/ et archive/ en 0700 propriété de root : un processus
+# non-root ne peut même pas les traverser, et Nginx s'arrêtait sur
+#   [emerg] cannot load certificate ... Permission denied
+#
+# Relâcher les droits sur ces répertoires exposerait la clé privée : c'est
+# l'inverse du but recherché. On garde donc le maître en root, avec deux
+# garde-fous posés côté compose — cap_drop: ALL et racine en lecture seule.
+# Le maître n'ouvre aucune socket cliente : ce sont les workers, non
+# privilégiés, qui traitent le trafic.
 
 EXPOSE 8080 8443
 

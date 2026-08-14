@@ -128,6 +128,18 @@ Nginx tourne sur la VM aux côtés du conteneur DHIS2 et assure :
 Nginx est un conteneur distinct de DHIS2 : un correctif de sécurité Nginx peut être
 appliqué sans reconstruire ni redémarrer l'application.
 
+**Modèle de privilèges.** Le processus maître s'exécute en root, les workers sous
+l'utilisateur `nginx`. Ce n'est pas un relâchement mais une contrainte de certbot : il
+place `live/` et `archive/` en `0700` propriété de root, si bien qu'un processus non-root
+ne peut même pas traverser ces répertoires — y compris pour lire `fullchain.pem`, pourtant
+en `0644`. Ouvrir ces répertoires exposerait la clé privée : l'inverse du but recherché.
+
+Trois capacités sont donc rendues au maître, et trois seulement : `CHOWN` pour attribuer
+les répertoires temporaires, `SETUID` et `SETGID` pour abaisser les privilèges des
+workers. Tout le reste est retiré (`cap_drop: ALL`), la racine du conteneur reste en
+lecture seule, et **les seuls processus exposés au trafic réseau — les workers — ne sont
+pas privilégiés**.
+
 ---
 
 ## 4. Configuration au démarrage

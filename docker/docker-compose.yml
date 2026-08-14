@@ -97,6 +97,16 @@ services:
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
+    # Trois capacités rendues au processus maître, et trois seulement :
+    #   CHOWN   attribuer les répertoires temporaires à l'utilisateur nginx
+    #   SETUID  \ abaisser les privilèges des workers, qui sont les seuls
+    #   SETGID  / processus exposés au trafic réseau
+    #
+    # Elles sont nécessaires parce que le maître démarre en root — seul moyen
+    # de lire le certificat, certbot plaçant live/ et archive/ en 0700 root.
+    # Relâcher les droits sur ces répertoires exposerait la clé privée : ces
+    # trois capacités sont le prix le plus faible pour l'éviter.
+    cap_add: [CHOWN, SETUID, SETGID]
     security_opt: ["no-new-privileges:true"]
     tmpfs: [/tmp, /var/cache/nginx, /var/run]
     logging:
