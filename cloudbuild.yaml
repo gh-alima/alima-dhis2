@@ -16,8 +16,6 @@
 substitutions:
   _AR_HOST: europe-west1-docker.pkg.dev
   _AR_REPO: dhis2-images
-  # "dev." pour les constructions d'intégration ; vide pour une publication.
-  _TAG_PREFIX: "dev."
   # Commit à inscrire dans le tag et les libellés OCI.
   #
   # Renseigné automatiquement par SHORT_SHA lorsque la construction vient d'un
@@ -64,7 +62,11 @@ steps:
           exit 1
         fi
 
-        TAG="${_TAG_PREFIX}$${DHIS2_VERSION}.$(date -u +%Y%m%d).$${REF}"
+        # Format unique : <version-dhis2>.<date>.<commit>
+        # Pas de préfixe distinguant intégration et publication — il n'existe
+        # qu'un seul environnement, donc une seule nature d'artefact. Un tag
+        # « dev. » sur une image destinée à la production serait mensonger.
+        TAG="$${DHIS2_VERSION}.$(date -u +%Y%m%d).$${REF}"
 
         echo "$${TAG}"              > /workspace/tag.txt
         echo "$${DHIS2_VERSION}"    > /workspace/version.txt

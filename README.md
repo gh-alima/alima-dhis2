@@ -70,7 +70,7 @@ docker build -f docker/nginx/Dockerfile -t dhis2-nginx:local docker/nginx
 ```
 
 En CI, `cloudbuild.yaml` fait la même chose et pousse dans Artifact Registry avec le tag
-`dev.<version>.<date>.<sha>`.
+`<version-dhis2>.<date>.<sha>` — par exemple `2.41.9.1.20260814.556073b`.
 
 ---
 
@@ -82,7 +82,7 @@ construit, jamais `latest` :
 ```bash
 gcloud builds submit \
   --config=cloudbuild-deploy.yaml \
-  --substitutions=_IMAGE_TAG=dev.2.41.9.1.20260814.a1b2c3d \
+  --substitutions=_IMAGE_TAG=2.41.9.1.20260814.556073b \
   --project=alima-dhis2-prod
 ```
 

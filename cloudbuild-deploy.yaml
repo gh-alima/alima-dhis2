@@ -5,7 +5,7 @@
 # "latest" : un tag mobile rendrait le retour arrière et l'audit impossibles.
 #
 #   gcloud builds submit --config=cloudbuild-deploy.yaml \
-#     --substitutions=_IMAGE_TAG=dev.2.41.9.1.20260814.a1b2c3d \
+#     --substitutions=_IMAGE_TAG=2.41.9.1.20260814.556073b \
 #     --project=alima-dhis2-prod
 #
 # ⚠ PRODUCTION UNIQUEMENT
@@ -52,7 +52,7 @@ steps:
 
         if [ -z "${_IMAGE_TAG}" ]; then
           echo "ERREUR : _IMAGE_TAG est obligatoire." >&2
-          echo "  Exemple : --substitutions=_IMAGE_TAG=dev.2.41.9.1.20260814.a1b2c3d" >&2
+          echo "  Exemple : --substitutions=_IMAGE_TAG=2.41.9.1.20260814.556073b" >&2
           exit 1
         fi
 

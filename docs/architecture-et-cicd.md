@@ -457,17 +457,28 @@ Le `--pull` garantit qu'on repart toujours de l'image de base officielle à jour
 arguments de construction inscrivent le commit et l'horodatage dans les libellés de
 l'image.
 
-**Nommage des tags** — deux formats, pour distinguer sans ambiguïté ce qui a vocation à
-partir en production :
+**Nommage des tags** — un format unique :
 
-| Origine | Format | Exemple |
-|---|---|---|
-| Construction d'intégration (push sur `main`) | `dev.<version>.<YYYYMMDD>.<nn>` | `dev.2.41.4.20260315.01` |
-| Construction de publication (manuelle) | `<version>.<YYYYMMDD>.<nn>` | `2.41.4.20260315.01` |
+```text
+<version-dhis2>.<YYYYMMDD>.<commit-court>
 
-Le tag mobile `latest` peut être maintenu pour confort, mais **aucun déploiement ne s'y
-réfère** : on déploie toujours un tag immuable, sans quoi le retour arrière et l'audit
-deviennent impossibles.
+2.41.9.1.20260814.556073b
+```
+
+Les trois composantes répondent aux trois questions qu'on se pose devant une image en
+production : *quelle version de DHIS2 ?*, *construite quand ?*, *à partir de quel code ?*
+
+**Pas de préfixe distinguant intégration et publication.** Un tel préfixe supposait deux
+natures d'artefacts, donc deux destinations. Il n'y en a qu'une : la production, après
+validation locale (§8). Étiqueter `dev.` une image destinée à la production serait
+mensonger, et la mention finirait par être ignorée — ce qui est pire que son absence.
+
+Le commit est **obligatoire** : `gcloud builds submit` n'envoie pas le répertoire `.git`
+à Cloud Build, la construction manuelle doit donc fournir `_VCS_REF`. À défaut, le
+pipeline échoue avec un message explicite plutôt que de publier une image anonyme.
+
+Aucun tag mobile n'est utilisé : `latest` n'est ni produit ni déployable, sans quoi le
+retour arrière et l'audit deviendraient impossibles.
 
 ### 7.3 Déploiement
 
