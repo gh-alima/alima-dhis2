@@ -18,6 +18,15 @@ substitutions:
   _AR_REPO: dhis2-images
   # "dev." pour les constructions d'intégration ; vide pour une publication.
   _TAG_PREFIX: "dev."
+  # Commit à inscrire dans le tag et les libellés OCI.
+  #
+  # Renseigné automatiquement par SHORT_SHA lorsque la construction vient d'un
+  # déclencheur. Pour un « gcloud builds submit » manuel, il DOIT être fourni :
+  # le répertoire .git n'est pas envoyé à Cloud Build, l'image serait donc
+  # étiquetée « manual » et impossible à rattacher à un commit.
+  #
+  #   --substitutions=_VCS_REF=$(git rev-parse --short HEAD)
+  _VCS_REF: ""
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -43,18 +52,27 @@ steps:
           exit 1
         fi
 
-        # SHORT_SHA est vide lors d'un « gcloud builds submit » manuel.
+        # SHORT_SHA n'est renseigné que par un déclencheur. En construction
+        # manuelle, on se rabat sur _VCS_REF, que l'appelant doit fournir.
         REF="${SHORT_SHA}"
-        [ -n "$${REF}" ] || REF=$(git rev-parse --short HEAD 2>/dev/null || echo manual)
+        [ -n "$${REF}" ] || REF="${_VCS_REF}"
+        if [ -z "$${REF}" ]; then
+          echo "ERREUR : impossible de déterminer le commit." >&2
+          echo "  Construction manuelle : ajouter" >&2
+          echo "    --substitutions=_VCS_REF=\$(git rev-parse --short HEAD)" >&2
+          echo "  Sans cela l'image ne serait rattachable à aucun commit." >&2
+          exit 1
+        fi
 
         TAG="${_TAG_PREFIX}$${DHIS2_VERSION}.$(date -u +%Y%m%d).$${REF}"
 
-        echo "$${TAG}"            > /workspace/tag.txt
-        echo "$${DHIS2_VERSION}"  > /workspace/version.txt
-        git rev-parse HEAD        > /workspace/vcs_ref.txt 2>/dev/null || echo unknown > /workspace/vcs_ref.txt
+        echo "$${TAG}"              > /workspace/tag.txt
+        echo "$${DHIS2_VERSION}"    > /workspace/version.txt
+        echo "$${REF}"              > /workspace/vcs_ref.txt
         date -u +%Y-%m-%dT%H:%M:%SZ > /workspace/build_date.txt
 
         echo "Version DHIS2 : $${DHIS2_VERSION}"
+        echo "Commit        : $${REF}"
         echo "Tag d'image   : $${TAG}"
 
   # ── 2. Construction de dhis2-core ──────────────────────────────────────────
