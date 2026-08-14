@@ -342,9 +342,26 @@ if [ -n "${OPERATOR}" ] && [ "${OPERATOR}" != "(unset)" ]; then
       --member="user:${OPERATOR}" --role="${ROLE}" --condition=None >/dev/null
   done
   ok "Accès VM pour ${OPERATOR} (tunnel IAP, sudo via OS Login)"
+
+  # Approbation des déploiements.
+  #
+  # cloudbuild.builds.approve n'est PAS inclus dans roles/cloudbuild.builds.editor :
+  # GCP sépare délibérément « lancer un déploiement » de « l'autoriser ». C'est
+  # ce qui permet d'instaurer un double regard — le consultant déclenche,
+  # le référent ALIMA approuve — en n'accordant l'approbation qu'à ce dernier.
+  #
+  # Pendant la phase projet, l'opérateur cumule les deux. Au transfert de
+  # compétences, il suffira de lui retirer ce rôle et de l'accorder au référent
+  # ALIMA : APPROVER="<email>" ./scripts/01-setup-gcp.sh
+  APPROVER="${APPROVER:-${OPERATOR}}"
+  run gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+    --member="user:${APPROVER}" \
+    --role="roles/cloudbuild.builds.approver" --condition=None >/dev/null
+  ok "Approbation des déploiements pour ${APPROVER}"
 else
   echo "  ⚠ Compte opérateur indéterminé — accorder manuellement :" >&2
-  echo "    roles/iap.tunnelResourceAccessor et roles/compute.osAdminLogin" >&2
+  echo "    roles/iap.tunnelResourceAccessor, roles/compute.osAdminLogin" >&2
+  echo "    et roles/cloudbuild.builds.approver" >&2
 fi
 
 # ── 8. Stockage des sauvegardes ──────────────────────────────────────────────

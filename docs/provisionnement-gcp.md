@@ -428,9 +428,34 @@ gcloud builds submit --config=cloudbuild-deploy.yaml --substitutions=_IMAGE_TAG=
 
 Ce n'est pas une faille du dispositif, mais sa limite exacte : l'approbation encadre le
 **processus**, l'accès est encadré par l'**IAM**. Toute personne disposant de
-`roles/cloudbuild.builds.editor` sur le projet peut déployer sans validation. Le contrôle
-réel consiste donc à n'accorder ce rôle qu'aux personnes autorisées à déployer — à
-arbitrer avec ALIMA lors du transfert de compétences.
+`roles/cloudbuild.builds.editor` peut lancer un déploiement direct, sans validation.
+
+### 9.4 Deux rôles distincts — et c'est l'essentiel
+
+GCP sépare délibérément le fait de **lancer** un déploiement et celui de **l'autoriser** :
+
+| Rôle | Permet |
+|---|---|
+| `roles/cloudbuild.builds.editor` | déclencher une exécution |
+| `roles/cloudbuild.builds.approver` | approuver une exécution en attente |
+
+Le second n'est **pas** inclus dans le premier : un utilisateur qui n'a que `editor` voit
+son déploiement rester bloqué en attente, et se heurte à « Autorisations requises :
+cloudbuild.builds.approve » s'il tente de l'approuver lui-même.
+
+C'est le mécanisme qui rend un **double regard** possible : le consultant déclenche, le
+référent ALIMA approuve. Pendant la phase projet, l'opérateur cumule les deux rôles —
+`01-setup-gcp.sh` les lui accorde. Au transfert de compétences, il suffira de retirer
+l'approbation à l'un et de l'accorder à l'autre :
+
+```bash
+APPROVER="referent@alima.ngo" ./scripts/01-setup-gcp.sh
+
+gcloud projects remove-iam-policy-binding alima-dhis2-prod   --member="user:<consultant>" --role="roles/cloudbuild.builds.approver"
+```
+
+C'est à ce moment-là, et pas avant, que l'approbation cesse d'être une formalité pour
+devenir un contrôle réel.
 
 ---
 
