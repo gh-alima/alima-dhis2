@@ -31,6 +31,7 @@ PSA_RANGE_NAME="google-managed-services-${VPC_NAME}"
 SQL_INSTANCE="pg16-dhis2-prod"
 AR_REPO="dhis2-images"
 VM_NAME="vm-dhis2-app"
+VM_IP_NAME="ip-dhis2-app"
 BACKUP_BUCKET="${PROJECT_ID}-dhis2-backups"
 
 KEEP_DATA=0
@@ -104,6 +105,11 @@ gcloud config set project "${PROJECT_ID}" >/dev/null
 log "VM"
 run gcloud compute instances delete "${VM_NAME}" --zone="${ZONE}" --quiet
 ok "VM ${VM_NAME}"
+
+# Une adresse statique réservée reste FACTURÉE même détachée de toute VM.
+# Elle doit être libérée explicitement, après la suppression de l'instance.
+run gcloud compute addresses delete "${VM_IP_NAME}" --region="${REGION}" --quiet
+ok "Adresse statique ${VM_IP_NAME}"
 
 run gcloud compute resource-policies delete snap-dhis2-daily --region="${REGION}" --quiet
 ok "Politique de snapshots"

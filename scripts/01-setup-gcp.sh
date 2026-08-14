@@ -35,6 +35,7 @@ SQL_DB_USER="dhis"
 AR_REPO="dhis2-images"
 
 VM_NAME="vm-dhis2-app"
+VM_IP_NAME="ip-dhis2-app"
 VM_TYPE="e2-standard-2"
 VM_DISK_SIZE="100"
 VM_IMAGE_FAMILY="ubuntu-2204-lts"
@@ -344,14 +345,47 @@ fi
 # ── 9. VM applicative ────────────────────────────────────────────────────────
 log "VM applicative"
 
+# Adresse IP publique STATIQUE.
+#
+# Statique et non éphémère : une adresse éphémère change à chaque arrêt/démarrage
+# de la VM, ce qui casserait l'enregistrement DNS — et donc le renouvellement du
+# certificat TLS, qui repose sur un challenge HTTP vers ce même nom.
+#
+# L'exposition reste maîtrisée par le pare-feu : seuls 80 et 443 sont ouverts
+# depuis Internet (règle allow-http-https, tag http-server). Le port 22 n'est
+# joignable que depuis la plage IAP — une adresse publique n'ouvre donc pas SSH.
+ensure "Adresse IP statique ${VM_IP_NAME}" \
+  gcloud compute addresses describe "${VM_IP_NAME}" --region="${REGION}" \
+  -- gcloud compute addresses create "${VM_IP_NAME}" --region="${REGION}"
+
+if [ "${DRY_RUN}" = "1" ]; then
+  VM_IP="<adresse-statique-réservée>"
+else
+  VM_IP=$(gcloud compute addresses describe "${VM_IP_NAME}" \
+    --region="${REGION}" --format='value(address)')
+  ok "Adresse publique : ${VM_IP}"
+fi
+
 if gcloud compute instances describe "${VM_NAME}" --zone="${ZONE}" >/dev/null 2>&1; then
   skip "VM ${VM_NAME}"
+
+  # Rattrapage : VM créée par une version antérieure du script, sans adresse
+  # publique. On la lui attache plutôt que d'exiger une recréation.
+  if [ "${DRY_RUN}" != "1" ]; then
+    CURRENT_IP=$(gcloud compute instances describe "${VM_NAME}" --zone="${ZONE}" \
+      --format='value(networkInterfaces[0].accessConfigs[0].natIP)' 2>/dev/null || true)
+    if [ -z "${CURRENT_IP}" ]; then
+      gcloud compute instances add-access-config "${VM_NAME}" --zone="${ZONE}" \
+        --address="${VM_IP}" >/dev/null
+      ok "Adresse ${VM_IP} rattachée à la VM existante"
+    fi
+  fi
 else
   run gcloud compute instances create "${VM_NAME}" \
     --zone="${ZONE}" \
     --machine-type="${VM_TYPE}" \
     --subnet="${SUBNET_NAME}" \
-    --no-address \
+    --address="${VM_IP}" \
     --image-family="${VM_IMAGE_FAMILY}" \
     --image-project="${VM_IMAGE_PROJECT}" \
     --boot-disk-size="${VM_DISK_SIZE}GB" \
@@ -361,7 +395,7 @@ else
     --scopes=https://www.googleapis.com/auth/cloud-platform \
     --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring \
     --metadata=enable-oslogin=TRUE
-  ok "VM ${VM_NAME} (sans IP publique, disque SSD)"
+  ok "VM ${VM_NAME} (adresse statique ${VM_IP}, disque SSD)"
 fi
 
 # Snapshots quotidiens du disque : ils couvrent les volumes Docker, donc le
@@ -384,24 +418,34 @@ cat <<EOF
   VPC / sous-rés. : ${VPC_NAME} / ${SUBNET_NAME} (${SUBNET_RANGE})
   Cloud SQL       : ${SQL_INSTANCE} (PostgreSQL 16, IP privée uniquement)
   Registre        : ${REGION}-docker.pkg.dev/${PROJECT_ID}/${AR_REPO}
-  VM              : ${VM_NAME} (${VM_TYPE}, sans IP publique)
+  VM              : ${VM_NAME} (${VM_TYPE})
+  Adresse publique: ${VM_IP}  (statique)
   Sauvegardes     : gs://${BACKUP_BUCKET}
 
   Étapes suivantes
   ----------------
-  1. IP privée de la base :
-       gcloud sql instances describe ${SQL_INSTANCE} \\
-         --format="value(ipAddresses[0].ipAddress)"
+  1. ENREGISTREMENT DNS — à faire en premier, tout le reste en dépend :
+
+       ${DHIS2_FQDN:-https://dhis2.alima.ngo}  ──▶  ${VM_IP}
+
+     Créer un enregistrement A pointant vers cette adresse, puis attendre la
+     propagation. Vérifier avant de continuer :
+       dig +short <domaine>
+
+     Sans DNS résolu, certbot ne peut pas émettre le certificat, et sans
+     certificat Nginx refuse de démarrer.
 
   2. Installation sur la VM :
        gcloud compute ssh ${VM_NAME} --zone=${ZONE} --tunnel-through-iap
-       # puis, sur la VM : sudo ./install-vm.sh
+       # puis, sur la VM : sudo DOMAIN=<domaine> ./install-vm.sh
 
-  3. Déclencheurs Cloud Build à créer dans la console :
+  3. IP privée de la base (déjà stockée dans le secret dhis2-db-host) :
+       gcloud sql instances describe ${SQL_INSTANCE} \\
+         --format="value(ipAddresses[0].ipAddress)"
+
+  4. Déclencheurs Cloud Build à créer dans la console :
        - construction : push sur main, cloudbuild.yaml, exclusion **/*.md
        - déploiement prod : manuel, cloudbuild-deploy.yaml,
          APPROBATION MANUELLE ACTIVÉE
-
-  4. Certificat TLS à obtenir sur la VM avant le premier démarrage de Nginx.
 
 EOF

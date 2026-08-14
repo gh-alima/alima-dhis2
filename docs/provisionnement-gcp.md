@@ -178,7 +178,7 @@ ressources déjà créées sont détectées et laissées telles quelles.
 | 6 | Artifact Registry `dhis2-images` + politique de nettoyage |
 | 7 | Comptes de service `sa-dhis2-vm` et `sa-dhis2-build`, avec leurs rôles |
 | 8 | Bucket de sauvegardes, rétention 30 jours, accès public interdit |
-| 9 | VM `vm-dhis2-app` (sans IP publique) + snapshots quotidiens |
+| 9 | Adresse IP statique `ip-dhis2-app`, VM `vm-dhis2-app` rattachée + snapshots quotidiens |
 
 Le mot de passe de la base est **généré aléatoirement et jamais affiché** : il part
 directement dans Secret Manager.
@@ -199,8 +199,12 @@ gcloud sql instances describe pg16-dhis2-prod \
 # Secrets créés
 gcloud secrets list --format="table(name,createTime)"
 
-# VM : doit être RUNNING, sans EXTERNAL_IP
+# VM : doit être RUNNING, avec l'adresse statique en EXTERNAL_IP
 gcloud compute instances list
+
+# Adresse statique réservée — à reporter dans le DNS
+gcloud compute addresses describe ip-dhis2-app \
+  --region=europe-west1 --format="value(address,status)"
 
 # Registre d'images (vide à ce stade, c'est normal)
 gcloud artifacts repositories list --location=europe-west1
@@ -209,14 +213,19 @@ gcloud artifacts repositories list --location=europe-west1
 Points de contrôle :
 
 - Cloud SQL n'expose **que** `PRIVATE` dans `ipAddresses[].type` ;
-- la VM n'a **pas** d'IP externe ;
+- la VM porte bien l'adresse statique en `EXTERNAL_IP`, et l'adresse est `IN_USE` ;
 - les cinq secrets sont présents.
+
+> L'adresse publique de la VM n'ouvre que les ports **80 et 443** : la règle
+> `allow-http-https` est la seule à autoriser Internet, et le port 22 reste réservé à la
+> plage IAP `35.235.240.0/20`. SSH n'est donc pas exposé.
 
 ---
 
 ## 8. Préparer la VM
 
-Se connecter — l'accès passe obligatoirement par IAP, il n'y a pas d'IP publique :
+Se connecter — SSH passe obligatoirement par IAP, le port 22 n'étant ouvert que
+depuis la plage `35.235.240.0/20` :
 
 ```bash
 gcloud compute ssh vm-dhis2-app \
@@ -287,13 +296,19 @@ Ces points ne sont pas couverts par `01-setup-gcp.sh` en l'état :
 
 | # | Écart | Quand le traiter |
 |---|---|---|
-| 1 | **IP externe de la VM.** La VM est créée sans IP publique : elle n'est joignable que par IAP. Il faut lui attacher une adresse statique, ou la placer derrière un équilibreur de charge, pour servir le trafic web entrant. | Avant l'étape 8 |
-| 2 | **Enregistrement DNS.** Le domaine doit pointer vers cette adresse avant l'obtention du certificat TLS. | Avant l'étape 8, après le n°1 |
+| 1 | **Enregistrement DNS.** Le script réserve et attache une adresse IP statique à la VM, et l'affiche en fin d'exécution. Le domaine doit pointer dessus (enregistrement A) avant l'obtention du certificat TLS. | Entre les étapes 7 et 8 |
 
-Ces deux points s'enchaînent : sans adresse publique, pas de DNS ; sans DNS, pas de
-certificat ; sans certificat, Nginx ne démarre pas. Ils se traitent donc **dans cet
-ordre**, une fois l'infrastructure créée et l'exposition souhaitée arbitrée avec ALIMA
-(adresse statique directe ou équilibreur de charge).
+Sans DNS résolu, `certbot` ne peut pas émettre le certificat ; sans certificat, Nginx
+refuse de démarrer. C'est la seule dépendance externe au provisionnement.
+
+```bash
+# Adresse à mettre dans l'enregistrement A
+gcloud compute addresses describe ip-dhis2-app \
+  --region=europe-west1 --format="value(address)"
+
+# Vérifier la propagation avant de poursuivre
+dig +short dhis2.alima.ngo
+```
 
 > **Pas d'environnement de test hébergé.** C'est une décision assumée pour contenir le
 > coût : la validation se fait en local (`docker compose --profile local`). Le pipeline de

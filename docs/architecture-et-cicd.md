@@ -688,7 +688,7 @@ Docker de référence DHIS2 laisse d'ailleurs ce montage commenté.
 | **D7** | Construction et déploiement dans deux pipelines séparés | Permet de redéployer n'importe quel tag antérieur sans reconstruction |
 | **D8** | Approbation manuelle portée par le trigger, pas par le dépôt | Le contrôle ne peut pas être contourné par un commit |
 | **D9** | Cloud SQL managé plutôt que PostgreSQL sur la VM | Sauvegardes automatiques, PITR, correctifs et supervision pris en charge ; supprime le principal point de fragilité de l'instance actuelle |
-| **D10** | Base sans IP publique, SSH via IAP uniquement | Surface d'exposition minimale — exigence renforcée par la nature des données |
+| **D10** | Base sans IP publique ; VM avec adresse statique mais port 22 fermé sauf IAP | La base n'est joignable que depuis le VPC. La VM doit servir le web, donc exposer 80/443 — c'est le pare-feu, pas l'absence d'adresse, qui protège SSH. Adresse statique et non éphémère : une adresse qui change casserait le DNS et le renouvellement TLS |
 | **D11** | Aucun identifiant d'infrastructure en dur dans les pipelines | Les identifiants de sous-réseau, de service et de projet passent par des substitutions ; le dépôt reste transposable et lisible |
 | **D12** | Magasin de fichiers sur disque (`filestore.provider = filesystem`) | Cohérent avec le modèle mono-VM ; couvert par les snapshots. Choix à figer dès le départ : la documentation DHIS2 avertit qu'un changement ultérieur de fournisseur est complexe à mener sans casser les références en base |
 | **D13** | Trois volumes distincts (`home`, `files`, `logs`) plutôt qu'un seul | Cycles de vie et politiques de sauvegarde différents : les fichiers sont irremplaçables, les journaux sont jetables, `dhis.conf` est reconstruit |
