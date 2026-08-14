@@ -126,21 +126,45 @@ steps:
         set -euo pipefail
         VM=$(cat /workspace/vm.txt)
 
-        tar czf /workspace/stack.tar.gz \
-          -C . docker/docker-compose.yml scripts
+        # Vérifier ce qu'on s'apprête à envoyer AVANT de l'envoyer : une archive
+        # incomplète ne se voit qu'à l'arrivée, sous forme d'une erreur qui
+        # n'en désigne pas la cause.
+        echo "Sources à transférer :"
+        ls -l docker/docker-compose.yml
+        ls -l scripts/
+
+        tar czf /workspace/stack.tar.gz docker/docker-compose.yml scripts
+
+        echo ""
+        echo "Contenu de l'archive :"
+        tar tzf /workspace/stack.tar.gz | sed 's/^/  /'
 
         gcloud compute scp /workspace/stack.tar.gz \
           "$${VM}:/tmp/stack.tar.gz" \
           --zone=${_ZONE} --tunnel-through-iap --quiet
 
+        # Extraction dans un répertoire de travail, puis mise en place par copie.
+        # L'ancienne version extrayait directement dans le répertoire applicatif
+        # et réarrangeait ensuite par mv et rmdir : chaque étape supposait la
+        # précédente réussie, sans jamais le vérifier ni le dire.
+        #
+        # scripts/ est remplacé en entier plutôt que fusionné : un script retiré
+        # du dépôt doit disparaître de la VM, sans quoi une version obsolète y
+        # survivrait indéfiniment.
         gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
           --command "set -euo pipefail
+            rm -rf /tmp/stack
+            mkdir -p /tmp/stack
+            tar xzf /tmp/stack.tar.gz -C /tmp/stack
             sudo mkdir -p ${_REMOTE_DIR}
-            sudo tar xzf /tmp/stack.tar.gz -C ${_REMOTE_DIR} --strip-components=0
-            sudo mv -f ${_REMOTE_DIR}/docker/docker-compose.yml ${_REMOTE_DIR}/docker-compose.yml
-            sudo rmdir ${_REMOTE_DIR}/docker 2>/dev/null || true
+            sudo cp -f /tmp/stack/docker/docker-compose.yml ${_REMOTE_DIR}/docker-compose.yml
+            sudo rm -rf ${_REMOTE_DIR}/scripts
+            sudo cp -r /tmp/stack/scripts ${_REMOTE_DIR}/scripts
             sudo chmod +x ${_REMOTE_DIR}/scripts/*.sh
-            rm -f /tmp/stack.tar.gz"
+            rm -rf /tmp/stack /tmp/stack.tar.gz
+            echo Contenu deploye :
+            ls -l ${_REMOTE_DIR}
+            ls -l ${_REMOTE_DIR}/scripts"
 
   # ── 3. Génération du .env depuis Secret Manager ────────────────────────────
   # Les secrets ne transitent jamais par ce pipeline : c'est la VM qui les lit
