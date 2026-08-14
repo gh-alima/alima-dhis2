@@ -313,19 +313,59 @@ df -h /                             # le disque doit exposer ~100 Go
 
 ## 9. Déclencheurs Cloud Build
 
-À créer dans la console GCP (Cloud Build → Déclencheurs), après avoir connecté le dépôt
-GitHub `gh-alima/alima-dhis2` :
+### 9.1 Connecter le dépôt — étape manuelle
+
+Deux préalables, dans cet ordre :
+
+```bash
+# 1. Le dépôt doit être à jour sur GitHub — un déclencheur construit ce qui y est
+git push origin main
+```
+
+**2. Connecter le dépôt à Cloud Build.** Cette étape passe par une autorisation OAuth et
+ne peut pas être scriptée :
+
+<https://console.cloud.google.com/cloud-build/triggers/connect>
+
+Choisir « GitHub (Cloud Build GitHub App) », autoriser l'accès, puis sélectionner
+`gh-alima/alima-dhis2`.
+
+### 9.2 Créer les déclencheurs
+
+```bash
+DRY_RUN=1 ./scripts/02-setup-triggers.sh   # vérifier ce qui sera créé
+./scripts/02-setup-triggers.sh
+```
 
 | Déclencheur | Événement | Configuration | Approbation |
 |---|---|---|---|
-| `dhis2-build` | Push sur `main` | `cloudbuild.yaml`, filtre d'exclusion `**/*.md` | non |
+| `dhis2-build` | Push sur `main`, hors `**/*.md` | `cloudbuild.yaml` | non |
 | `dhis2-deploy-prod` | Manuel | `cloudbuild-deploy.yaml` | **OUI — obligatoire** |
 
-L'approbation manuelle de production se règle dans les paramètres du déclencheur
-(« Exiger une approbation avant l'exécution »). **Ce contrôle vit dans le déclencheur, pas
-dans le dépôt** : personne ne peut le contourner par un commit.
+Les deux s'exécutent sous le compte de service `sa-dhis2-build`. Le script vérifie après
+coup que l'approbation est bien active sur le déclencheur de production, plutôt que de le
+supposer.
 
-Le compte de service utilisé par les déclencheurs doit être `sa-dhis2-build`.
+Les modifications purement documentaires ne déclenchent pas de construction : une image
+identique sous un nouveau tag n'apporte rien et brouille l'historique du registre.
+
+### 9.3 Portée exacte de l'approbation
+
+L'approbation vit dans le **déclencheur**, pas dans le dépôt. Un commit ne peut donc ni la
+désactiver ni la contourner — c'est précisément ce qu'elle protège.
+
+En revanche, elle **ne bloque pas** un lancement direct du pipeline :
+
+```bash
+# Contourne l'approbation : le déclencheur n'est pas impliqué
+gcloud builds submit --config=cloudbuild-deploy.yaml --substitutions=_IMAGE_TAG=<tag>
+```
+
+Ce n'est pas une faille du dispositif, mais sa limite exacte : l'approbation encadre le
+**processus**, l'accès est encadré par l'**IAM**. Toute personne disposant de
+`roles/cloudbuild.builds.editor` sur le projet peut déployer sans validation. Le contrôle
+réel consiste donc à n'accorder ce rôle qu'aux personnes autorisées à déployer — à
+arbitrer avec ALIMA lors du transfert de compétences.
 
 ---
 

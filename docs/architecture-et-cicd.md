@@ -665,6 +665,7 @@ Deux validations conditionnent le Go-Live et sont propres à ALIMA :
 ├── configuration/                métadonnées DHIS2 à charger (JSON)
 ├── scripts/
 │   ├── 01-setup-gcp.sh           provisionnement — source de vérité
+│   ├── 02-setup-triggers.sh      déclencheurs Cloud Build (build + deploy)
 │   ├── install-vm.sh             Docker, volumes, TLS, agent Ops sur la VM
 │   ├── render-env.sh             génère .env depuis Secret Manager (sur la VM)
 │   ├── backup-filestore.sh       archive le volume dhis2-files vers Cloud Storage
