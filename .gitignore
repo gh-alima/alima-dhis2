@@ -42,9 +42,14 @@ docker-compose.override.yml
 Thumbs.db
 Desktop.ini
 
-# --- Éditeurs et outillage local ----------------------------------------------
-# CLAUDE.md est versionné (documentation d'équipe) ; les réglages locaux non.
-.claude/settings.local.json
+# --- Outillage d'assistance -----------------------------------------------------
+# Les fichiers liés à Claude Code ne sont pas versionnés : ils relèvent de
+# l'outillage individuel, pas de la définition du projet. La documentation de
+# référence est dans docs/.
+CLAUDE.md
+.claude/
+
+# --- Éditeurs -------------------------------------------------------------------
 .vscode/
 .idea/
 *.swp

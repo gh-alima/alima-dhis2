@@ -645,7 +645,6 @@ Deux validations conditionnent le Go-Live et sont propres à ALIMA :
 
 ```
 .
-├── CLAUDE.md
 ├── README.md                     présentation, démarrage rapide, conventions
 ├── .gitignore                    secrets, dumps, certificats — exclus par défaut
 ├── cloudbuild.yaml               construction : images → Artifact Registry
@@ -719,7 +718,7 @@ Docker de référence DHIS2 laisse d'ailleurs ce montage commenté.
 | 2 | SSO OpenID à activer ? Sur quel annuaire ? | Prévoir le bloc et le secret dès la conception, même désactivé | Prévoir le bloc, `DHIS2_SSO_OPENID_ACTIVATED=false` au départ |
 | 3 | Sur quelle plateforme se fera la recette utilisateur (S3) ? | Sans environnement hébergé, les référents ALIMA n'ont rien à tester | Instance temporaire créée pour la seule semaine de recette, puis supprimée — coût borné à cette période |
 | 4 | Rétention Artifact Registry compatible avec la fenêtre de retour arrière ? | Un tag purgé = retour arrière impossible | Vérifier que les 5 versions conservées couvrent le besoin post-bascule |
-| 5 | `CLAUDE.md` versionné ou ignoré ? | Cohérence de la documentation d'équipe | Versionné — il fait partie de la documentation du dépôt |
+| 5 | ~~`CLAUDE.md` versionné ou ignoré ?~~ | — | **Tranché : ignoré.** L'outillage d'assistance relève du poste de travail, pas de la définition du projet ; la documentation de référence est dans `docs/` |
 | 6 | Qui approuve les déploiements en production, et à partir de quelle phase ? | Chaîne de responsabilité au Go-Live | Consultant jusqu'à la bascule, référent ALIMA ensuite |
 | 7 | Point de terminaison exact de la sonde de disponibilité | Une sonde inadaptée signale un service en panne alors qu'il fonctionne | `/api/system/ping` — à confirmer sur l'image 2.41 retenue. `curl` est bien présent dans `dhis2/core` : le déploiement de référence DHIS2 s'en sert |
 | 8 | Journalisation d'audit système (`SYSTEM_AUDIT_ENABLED`) activée ? | Volumétrie des journaux et de la base, exigences de traçabilité | Désactivée par défaut ; à activer si ALIMA a une exigence d'audit explicite |
