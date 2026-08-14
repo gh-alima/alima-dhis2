@@ -6,26 +6,32 @@
 #   - dhis2-build       : construction automatique à chaque push sur main
 #   - dhis2-deploy-prod : déploiement manuel, AVEC APPROBATION OBLIGATOIRE
 #
-# PRÉREQUIS — à faire UNE FOIS, dans la console, avant d'exécuter ce script :
+# Les déclencheurs sont créés dans la RÉGION où le dépôt est connecté
+# (europe-west1 par défaut), et non en « global » : une connexion régionale
+# relève de la 2e génération de Cloud Build, dont les déclencheurs doivent
+# vivre dans la même région que la connexion.
+#
+# PRÉREQUIS — à faire UNE FOIS, avant d'exécuter ce script :
 #
 #   1. Le dépôt doit être poussé sur GitHub :
 #        git push origin main
 #
-#   2. Le dépôt GitHub doit être connecté à Cloud Build. Cette étape passe par
-#      une autorisation OAuth et ne peut pas être automatisée :
+#   2. Le dépôt GitHub doit être connecté à Cloud Build dans la région visée.
+#      Cette étape passe par une autorisation OAuth et ne peut pas être
+#      automatisée :
 #        https://console.cloud.google.com/cloud-build/triggers/connect
-#      Choisir « GitHub (Cloud Build GitHub App) », autoriser, sélectionner
-#      gh-alima/alima-dhis2.
 #
 # Le script est IDEMPOTENT : un déclencheur existant est laissé en l'état.
 #
 # Usage :
 #   ./scripts/02-setup-triggers.sh
+#   REGION=europe-west1 ./scripts/02-setup-triggers.sh
 #   DRY_RUN=1 ./scripts/02-setup-triggers.sh
 # =============================================================================
 set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-alima-dhis2-prod}"
+REGION="${REGION:-europe-west1}"
 REPO_OWNER="${REPO_OWNER:-gh-alima}"
 REPO_NAME="${REPO_NAME:-alima-dhis2}"
 BRANCH="${BRANCH:-main}"
@@ -51,14 +57,54 @@ run() {
 }
 
 trigger_exists() {
-  gcloud builds triggers describe "$1" --region=global >/dev/null 2>&1
+  gcloud builds triggers describe "$1" --region="${REGION}" >/dev/null 2>&1
 }
 
 command -v gcloud >/dev/null || { echo "gcloud est requis." >&2; exit 1; }
 
-log "Projet ${PROJECT_ID} — dépôt ${REPO_OWNER}/${REPO_NAME}"
+log "Projet ${PROJECT_ID} — région ${REGION} — dépôt ${REPO_OWNER}/${REPO_NAME}"
 gcloud config set project "${PROJECT_ID}" >/dev/null
 [ "${DRY_RUN}" = "1" ] && echo "  MODE DRY-RUN — aucun déclencheur ne sera créé."
+
+# ── Détection du dépôt connecté ──────────────────────────────────────────────
+# Une connexion régionale relève de la 2e génération : le déclencheur se
+# rattache alors à une ressource « repository » complète, et non à un couple
+# propriétaire/nom comme en 1re génération.
+log "Recherche du dépôt connecté"
+
+REPO_RESOURCE=""
+for CONN in $(gcloud builds connections list --region="${REGION}" \
+                --format='value(name)' 2>/dev/null); do
+  CONN_ID="${CONN##*/}"
+  FOUND=$(gcloud builds repositories list \
+            --connection="${CONN_ID}" --region="${REGION}" \
+            --format='value(name)' 2>/dev/null \
+          | grep -E "/repositories/${REPO_NAME}$" | head -1 || true)
+  if [ -n "${FOUND}" ]; then
+    REPO_RESOURCE="${FOUND}"
+    ok "Connexion : ${CONN_ID}"
+    ok "Dépôt     : ${REPO_RESOURCE}"
+    break
+  fi
+done
+
+if [ -z "${REPO_RESOURCE}" ]; then
+  cat >&2 <<EOF
+
+  ERREUR : aucun dépôt « ${REPO_NAME} » connecté dans la région ${REGION}.
+
+  Connexions présentes dans cette région :
+$(gcloud builds connections list --region="${REGION}" --format='value(name)' 2>/dev/null | sed 's/^/    /' || echo "    (aucune)")
+
+  Connecter le dépôt avant de relancer :
+    https://console.cloud.google.com/cloud-build/triggers/connect?project=${PROJECT_ID}
+
+  Si la connexion existe dans une AUTRE région, relancer avec :
+    REGION=<région> ./scripts/02-setup-triggers.sh
+
+EOF
+  exit 1
+fi
 
 # ── 1. Construction ──────────────────────────────────────────────────────────
 # Se déclenche à chaque push sur main. Les modifications purement
@@ -72,13 +118,12 @@ else
   run gcloud builds triggers create github \
     --name="${TRIGGER_BUILD}" \
     --description="Construit dhis2-core et dhis2-nginx à chaque push sur ${BRANCH}" \
-    --repo-owner="${REPO_OWNER}" \
-    --repo-name="${REPO_NAME}" \
+    --region="${REGION}" \
+    --repository="${REPO_RESOURCE}" \
     --branch-pattern="^${BRANCH}$" \
     --build-config=cloudbuild.yaml \
     --ignored-files="**/*.md" \
-    --service-account="${SA_PATH}" \
-    --region=global
+    --service-account="${SA_PATH}"
   ok "${TRIGGER_BUILD} — push sur ${BRANCH}, hors **/*.md"
 fi
 
@@ -94,39 +139,41 @@ else
   run gcloud builds triggers create manual \
     --name="${TRIGGER_DEPLOY}" \
     --description="Déploie un tag existant en PRODUCTION — approbation obligatoire" \
-    --repo="https://github.com/${REPO_OWNER}/${REPO_NAME}" \
-    --repo-type=GITHUB \
+    --region="${REGION}" \
+    --repository="${REPO_RESOURCE}" \
     --branch="${BRANCH}" \
     --build-config=cloudbuild-deploy.yaml \
     --require-approval \
-    --service-account="${SA_PATH}" \
-    --region=global
+    --service-account="${SA_PATH}"
   ok "${TRIGGER_DEPLOY} — manuel, APPROBATION OBLIGATOIRE"
 fi
 
 # ── 3. Contrôle ──────────────────────────────────────────────────────────────
-log "Déclencheurs en place"
+log "Déclencheurs en place (région ${REGION})"
 if [ "${DRY_RUN}" != "1" ]; then
-  gcloud builds triggers list --region=global \
+  gcloud builds triggers list --region="${REGION}" \
     --format="table(name,disabled,approvalConfig.approvalRequired:label=APPROBATION)"
 
   # L'approbation est le garde-fou de la production : on vérifie qu'elle est
   # bien active plutôt que de la supposer.
-  APPROVAL=$(gcloud builds triggers describe "${TRIGGER_DEPLOY}" --region=global \
+  APPROVAL=$(gcloud builds triggers describe "${TRIGGER_DEPLOY}" --region="${REGION}" \
     --format='value(approvalConfig.approvalRequired)' 2>/dev/null || echo "")
-  if [ "${APPROVAL}" != "True" ] && [ "${APPROVAL}" != "true" ]; then
-    echo ""
-    echo "  ⚠ ATTENTION : l'approbation n'est PAS active sur ${TRIGGER_DEPLOY}." >&2
-    echo "    Un déploiement en production pourrait être lancé sans validation." >&2
-    echo "    L'activer : Cloud Build → Déclencheurs → ${TRIGGER_DEPLOY}" >&2
-    echo "               → Approbation → Exiger une approbation" >&2
-  fi
+  case "${APPROVAL}" in
+    True|true) ok "Approbation confirmée sur ${TRIGGER_DEPLOY}" ;;
+    *)
+      echo ""
+      echo "  ⚠ ATTENTION : l'approbation n'est PAS active sur ${TRIGGER_DEPLOY}." >&2
+      echo "    Un déploiement en production pourrait être lancé sans validation." >&2
+      echo "    L'activer : Cloud Build → Déclencheurs → ${TRIGGER_DEPLOY}" >&2
+      echo "               → Approbation → Exiger une approbation" >&2
+      ;;
+  esac
 fi
 
 cat <<EOF
 
-  Chaîne en place
-  ---------------
+  Chaîne en place — région ${REGION}
+  ---------------------------------
   push sur ${BRANCH}
      └─▶ ${TRIGGER_BUILD}  (automatique)
             └─▶ images dans Artifact Registry, tag <version>.<date>.<commit>
@@ -136,11 +183,11 @@ cat <<EOF
             └─▶ VM de production
 
   Lancer un déploiement :
-    gcloud builds triggers run ${TRIGGER_DEPLOY} --region=global \\
+    gcloud builds triggers run ${TRIGGER_DEPLOY} --region=${REGION} \\
       --branch=${BRANCH} --substitutions=_IMAGE_TAG=<tag>
 
-  ou, sans passer par le déclencheur (pas d'approbation dans ce cas) :
-    gcloud builds submit --config=cloudbuild-deploy.yaml \\
-      --substitutions=_IMAGE_TAG=<tag>
+  ⚠ Un « gcloud builds submit » direct contourne l'approbation : c'est l'IAM,
+    et non le déclencheur, qui restreint qui peut déployer (cf. §9.3 du mode
+    opératoire).
 
 EOF

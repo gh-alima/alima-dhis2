@@ -330,12 +330,24 @@ ne peut pas être scriptée :
 Choisir « GitHub (Cloud Build GitHub App) », autoriser l'accès, puis sélectionner
 `gh-alima/alima-dhis2`.
 
+> **La connexion est régionale.** Noter la région choisie : les déclencheurs devront
+> vivre dans la même. Une connexion régionale relève de la 2ᵉ génération de Cloud Build,
+> dont les déclencheurs se rattachent à une ressource `repository` complète — et non à un
+> couple propriétaire/nom comme en 1ʳᵉ génération. Ici : **`europe-west1`**.
+
 ### 9.2 Créer les déclencheurs
 
 ```bash
 DRY_RUN=1 ./scripts/02-setup-triggers.sh   # vérifier ce qui sera créé
-./scripts/02-setup-triggers.sh
+./scripts/02-setup-triggers.sh             # région europe-west1 par défaut
+
+# Si la connexion est ailleurs :
+REGION=<région> ./scripts/02-setup-triggers.sh
 ```
+
+Le script retrouve seul le dépôt connecté : il parcourt les connexions de la région et
+cherche celle qui expose `alima-dhis2`. Si aucune ne correspond, il s'arrête en listant
+les connexions présentes, plutôt que d'échouer sur une erreur d'API peu lisible.
 
 | Déclencheur | Événement | Configuration | Approbation |
 |---|---|---|---|
