@@ -326,6 +326,27 @@ for ROLE in roles/artifactregistry.writer \
 done
 ok "Rôles de Cloud Build (registre, accès VM via IAP)"
 
+# ── Accès humain à la VM ─────────────────────────────────────────────────────
+# Piège classique : roles/owner N'INCLUT PAS iap.tunnelInstances.accessViaIAP.
+# Être propriétaire du projet ne suffit donc pas pour ouvrir un tunnel IAP, et
+# la VM n'ayant pas d'accès SSH direct, elle devient inatteignable — avec une
+# erreur « 4033: not authorized » peu parlante.
+#
+# osAdminLogin, de son côté, conditionne l'obtention de sudo une fois connecté,
+# la VM ayant OS Login activé.
+OPERATOR="${OPERATOR:-$(gcloud config get-value account 2>/dev/null)}"
+if [ -n "${OPERATOR}" ] && [ "${OPERATOR}" != "(unset)" ]; then
+  for ROLE in roles/iap.tunnelResourceAccessor \
+              roles/compute.osAdminLogin; do
+    run gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
+      --member="user:${OPERATOR}" --role="${ROLE}" --condition=None >/dev/null
+  done
+  ok "Accès VM pour ${OPERATOR} (tunnel IAP, sudo via OS Login)"
+else
+  echo "  ⚠ Compte opérateur indéterminé — accorder manuellement :" >&2
+  echo "    roles/iap.tunnelResourceAccessor et roles/compute.osAdminLogin" >&2
+fi
+
 # ── 8. Stockage des sauvegardes ──────────────────────────────────────────────
 log "Cloud Storage"
 

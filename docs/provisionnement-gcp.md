@@ -303,6 +303,19 @@ gcloud compute scp --recurse scripts/ vm-dhis2-app:~ \
 **2. Se connecter** — SSH passe obligatoirement par IAP, le port 22 n'étant ouvert que
 depuis la plage `35.235.240.0/20` :
 
+> ⚠ **`roles/owner` ne suffit pas pour ouvrir un tunnel IAP.** Le rôle de propriétaire
+> n'inclut pas `iap.tunnelInstances.accessViaIAP` : sans octroi explicite, la connexion
+> échoue sur `ERROR: [0] ... [4033: 'not authorized']`, message qui n'oriente pas vers sa
+> cause. `01-setup-gcp.sh` accorde désormais les deux rôles nécessaires au compte qui
+> l'exécute ; pour un autre opérateur :
+>
+> ```bash
+> gcloud projects add-iam-policy-binding alima-dhis2-prod >   --member="user:<email>" --role="roles/iap.tunnelResourceAccessor" --condition=None
+> gcloud projects add-iam-policy-binding alima-dhis2-prod >   --member="user:<email>" --role="roles/compute.osAdminLogin" --condition=None
+> ```
+>
+> Le second rôle conditionne l'obtention de `sudo` sur la VM, qui a OS Login activé.
+
 ```bash
 gcloud compute ssh vm-dhis2-app \
   --zone=europe-west1-b --tunnel-through-iap --project=alima-dhis2-prod
