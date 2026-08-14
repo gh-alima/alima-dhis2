@@ -76,30 +76,36 @@ steps:
         # Les deux images doivent exister dans le registre avant qu'on touche
         # à la VM.
         #
-        # Le message d'erreur de gcloud est CONSERVÉ et réaffiché. Le masquer
-        # revenait à traduire toute défaillance — droits insuffisants, API
-        # indisponible, réseau — par « image introuvable », en envoyant chercher
-        # au mauvais endroit. Les tags réellement présents sont listés dans la
-        # foulée : au moment où l'on se trompe de tag, on a la bonne liste sous
-        # les yeux.
+        # On liste les tags, on ne « describe » pas l'image : describe va aussi
+        # chercher les métadonnées de vulnérabilités dans Container Analysis,
+        # et échoue sur containeranalysis.occurrences.list — une donnée dont on
+        # n'a aucun usage ici. Élargir les droits du compte de service pour la
+        # lire aurait été payer un privilège pour un besoin inexistant.
+        #
+        # La liste des tags répond exactement à la question posée : ce tag
+        # existe-t-il ? Elle est réaffichée en cas d'échec, pour avoir la bonne
+        # réponse sous les yeux au moment où l'on se trompe.
         BASE="${_AR_HOST}/${PROJECT_ID}/${_AR_REPO}"
         for IMG in dhis2-core dhis2-nginx; do
           echo "Vérification de $${IMG}:${_IMAGE_TAG}..."
-          if ERR=$(gcloud artifacts docker images describe \
-                     "$${BASE}/$${IMG}:${_IMAGE_TAG}" 2>&1 >/dev/null); then
+
+          TAGS=$(gcloud artifacts docker images list "$${BASE}/$${IMG}" \
+                   --include-tags --format='value(tags)' 2>/workspace/ar-err.txt \
+                 | tr ',' '\n' | tr -d ' ' | grep -v '^$$') || true
+
+          if echo "$${TAGS}" | grep -qx "${_IMAGE_TAG}"; then
             echo "  présente"
           else
             echo "" >&2
-            echo "ERREUR : impossible de valider l'image" >&2
-            echo "         $${BASE}/$${IMG}:${_IMAGE_TAG}" >&2
+            echo "ERREUR : $${IMG}:${_IMAGE_TAG} absente du registre." >&2
             echo "" >&2
-            echo "  Réponse d'Artifact Registry :" >&2
-            echo "$${ERR}" | sed 's/^/    /' >&2
-            echo "" >&2
+            if [ -s /workspace/ar-err.txt ]; then
+              echo "  Réponse d'Artifact Registry :" >&2
+              sed 's/^/    /' /workspace/ar-err.txt >&2
+              echo "" >&2
+            fi
             echo "  Tags présents pour $${IMG} :" >&2
-            gcloud artifacts docker images list "$${BASE}/$${IMG}" \
-              --include-tags --format='value(tags)' 2>&1 \
-              | tr ',' '\n' | sed 's/^ *//' | sed 's/^/    /' >&2 || true
+            echo "$${TAGS}" | sed 's/^/    /' >&2
             exit 1
           fi
         done
