@@ -335,12 +335,24 @@ else
   run gcloud storage buckets create "gs://${BACKUP_BUCKET}" \
     --location="${REGION}" --uniform-bucket-level-access \
     --public-access-prevention
-  run gcloud storage buckets update "gs://${BACKUP_BUCKET}" \
-    --lifecycle-file=/dev/stdin <<'LIFECYCLE'
+  ok "Bucket ${BACKUP_BUCKET} (accès public interdit)"
+fi
+
+# La règle de cycle de vie est appliquée à CHAQUE passage, hors du test
+# d'existence du bucket : si elle échouait après la création, la placer dans le
+# bloc « else » ferait qu'elle ne serait jamais rejouée — un bucket sans
+# rétention accumulerait indéfiniment les sauvegardes, sans que rien ne le
+# signale.
+#
+# Le JSON passe par un fichier réel et non par un heredoc sur /dev/stdin :
+# bash matérialise un heredoc dans un fichier temporaire qu'il supprime
+# immédiatement, et gcloud échoue en tentant de le relire.
+cat <<'LIFECYCLE' > /tmp/bucket-lifecycle.json
 {"lifecycle":{"rule":[{"action":{"type":"Delete"},"condition":{"age":30}}]}}
 LIFECYCLE
-  ok "Bucket ${BACKUP_BUCKET} (rétention 30 jours, accès public interdit)"
-fi
+run gcloud storage buckets update "gs://${BACKUP_BUCKET}" \
+  --lifecycle-file=/tmp/bucket-lifecycle.json
+ok "Rétention des sauvegardes : 30 jours"
 
 # ── 9. VM applicative ────────────────────────────────────────────────────────
 log "VM applicative"
