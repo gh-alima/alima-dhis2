@@ -5,22 +5,23 @@ construction/déploiement et de la gestion de la configuration.
 
 | | |
 |---|---|
-| **Projet** | Migration DHIS2 ALIMA 2.35 → 2.41 |
-| **Cible** | GCP `alima-dhis2-prod`, région `europe-west1` |
-| **Statut** | Conception mise en œuvre — image validée localement, infrastructure provisionnée le 14 août 2026. Reste en attente : enregistrement DNS côté ALIMA, puis premier déploiement |
-| **Version** | 1.2 |
+| **Objet** | Migration DHIS2 ALIMA 2.35 → 2.41 |
+| **Infrastructure** | GCP `alima-dhis2-prod`, région `europe-west1` |
+| **Statut** | En service depuis le 14 août 2026 — <https://dhis2-test.alima.ngo> |
+| **Version** | 1.3 |
 
 ---
 
 ## 1. Objet
 
-Ce document définit **comment DHIS2 est empaqueté, configuré, construit et déployé**
-pour ALIMA. Il précède l'écriture du code : le dépôt sera implémenté conformément à ce
-qui est décrit ici.
+Ce document explique **comment DHIS2 est empaqueté, configuré, construit et déployé**, et
+pourquoi ces choix ont été faits. Il s'adresse à qui doit intervenir sur la chaîne
+elle-même — la modifier, la reproduire, ou comprendre une décision avant de la remettre
+en cause.
 
-Il ne couvre pas le provisionnement de l'infrastructure GCP (voir
-`scripts/01-setup-gcp.sh`, source de vérité) ni le déroulé opérationnel de la migration
-de données (voir `docs/plan-migration.md`).
+Pour l'exploitation courante, voir [`aide-memoire.md`](aide-memoire.md). Pour créer
+l'infrastructure, voir [`provisionnement-gcp.md`](provisionnement-gcp.md) — et
+`scripts/01-setup-gcp.sh`, qui en est la source de vérité.
 
 ---
 
@@ -533,7 +534,7 @@ retour arrière et l'audit deviendraient impossibles.
 Déclenchement manuel avec _IMAGE_TAG
    │
    ▼
-[APPROBATION MANUELLE]  ← référent ALIMA ou consultant selon la phase
+[APPROBATION MANUELLE]  ← approbateur désigné (§9.4 du provisionnement)
    │
    ▼
 [PRODUCTION]  1. validate    tag fourni, images présentes dans le registre
@@ -585,7 +586,7 @@ sur GCP — décision assumée pour contenir le coût. La validation se fait loc
 
 | | Local | Production |
 |---|---|---|
-| Hébergement | poste du consultant, `docker compose --profile local` | VM `vm-dhis2-app` |
+| Hébergement | poste de travail, `docker compose --profile local` | VM `vm-dhis2-app` |
 | Déploiement | `up --build` | **approbation manuelle obligatoire** |
 | Base de données | conteneur PostgreSQL 16 + PostGIS | Cloud SQL `pg16-dhis2-prod` |
 | `DHIS2_FQDN` | `http://localhost:8080` | URL de production ALIMA |
@@ -786,7 +787,7 @@ Docker de référence DHIS2 laisse d'ailleurs ce montage commenté.
 | 3 | Sur quelle plateforme se fera la recette utilisateur (S3) ? | Sans environnement hébergé, les référents ALIMA n'ont rien à tester | Instance temporaire créée pour la seule semaine de recette, puis supprimée — coût borné à cette période |
 | 4 | Rétention Artifact Registry compatible avec la fenêtre de retour arrière ? | Un tag purgé = retour arrière impossible | Vérifier que les 5 versions conservées couvrent le besoin post-bascule |
 | 5 | ~~`CLAUDE.md` versionné ou ignoré ?~~ | — | **Tranché : ignoré.** L'outillage d'assistance relève du poste de travail, pas de la définition du projet ; la documentation de référence est dans `docs/` |
-| 6 | Qui approuve les déploiements en production, et à partir de quelle phase ? | Chaîne de responsabilité au Go-Live | Consultant jusqu'à la bascule, référent ALIMA ensuite |
+| 6 | Qui déclenche les déploiements, qui les approuve ? | Sans séparation des deux rôles, l'approbation reste une formalité | Deux comptes distincts — voir §9.4 du provisionnement |
 | 7 | Point de terminaison exact de la sonde de disponibilité | Une sonde inadaptée signale un service en panne alors qu'il fonctionne | `/api/system/ping` — à confirmer sur l'image 2.41 retenue. `curl` est bien présent dans `dhis2/core` : le déploiement de référence DHIS2 s'en sert |
 | 8 | Journalisation d'audit système (`SYSTEM_AUDIT_ENABLED`) activée ? | Volumétrie des journaux et de la base, exigences de traçabilité | Désactivée par défaut ; à activer si ALIMA a une exigence d'audit explicite |
 

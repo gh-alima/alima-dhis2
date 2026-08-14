@@ -27,14 +27,19 @@ Conception sous-jacente : [`architecture-et-cicd.md`](architecture-et-cicd.md).
 | **Adresse publique statique** | `ip-dhis2-app` — **`34.38.89.219`** | ✅ |
 | Snapshots quotidiens | `snap-dhis2-daily`, rétention 14 jours | ✅ |
 
-### Ce qui reste à faire
+### Mise en service
 
-| # | Action | Responsable | État |
-|---|---|---|---|
-| 1 | **Enregistrement DNS** : `dhis2-test.alima.ngo` → `34.38.89.219` | équipe ALIMA | ✅ **en place**, vérifié le 14/08/2026 |
-| 2 | Copie des scripts et exécution d'`install-vm.sh` sur la VM | consultant | à faire |
-| 3 | Création des déclencheurs Cloud Build (§9) | consultant | à faire |
-| 4 | Premier déploiement (§10) | consultant | à faire |
+| # | Étape | État |
+|---|---|---|
+| 1 | Enregistrement DNS `dhis2-test.alima.ngo` → `34.38.89.219` | ✅ |
+| 2 | Préparation de la VM — Docker, gcloud, TLS, agent Ops | ✅ |
+| 3 | Déclencheurs Cloud Build (§9) | ✅ |
+| 4 | Premier déploiement (§10) | ✅ |
+
+**L'instance est en service** sur <https://dhis2-test.alima.ngo>.
+
+Ce document reste utile pour recréer l'infrastructure — nouvel environnement, reprise
+après incident majeur — et pour comprendre ce qui a été mis en place.
 
 ### Nom d'hôte : `dhis2-test.alima.ngo`
 
@@ -443,15 +448,20 @@ Le second n'est **pas** inclus dans le premier : un utilisateur qui n'a que `edi
 son déploiement rester bloqué en attente, et se heurte à « Autorisations requises :
 cloudbuild.builds.approve » s'il tente de l'approuver lui-même.
 
-C'est le mécanisme qui rend un **double regard** possible : le consultant déclenche, le
-référent ALIMA approuve. Pendant la phase projet, l'opérateur cumule les deux rôles —
-`01-setup-gcp.sh` les lui accorde. Au transfert de compétences, il suffira de retirer
-l'approbation à l'un et de l'accorder à l'autre :
+C'est le mécanisme qui rend un **double regard** possible : une personne déclenche le
+déploiement, une autre l'autorise. Tant qu'un même compte porte les deux rôles,
+l'approbation reste une formalité — elle ne devient un contrôle réel qu'une fois les rôles
+séparés :
 
 ```bash
-APPROVER="referent@alima.ngo" ./scripts/01-setup-gcp.sh
+# Accorder l'approbation à la personne qui valide les mises en production
+gcloud projects add-iam-policy-binding alima-dhis2-prod \
+  --member="user:<approbateur>" \
+  --role="roles/cloudbuild.builds.approver" --condition=None
 
-gcloud projects remove-iam-policy-binding alima-dhis2-prod   --member="user:<consultant>" --role="roles/cloudbuild.builds.approver"
+# La retirer à celle qui déclenche les déploiements
+gcloud projects remove-iam-policy-binding alima-dhis2-prod \
+  --member="user:<opérateur>" --role="roles/cloudbuild.builds.approver"
 ```
 
 C'est à ce moment-là, et pas avant, que l'approbation cesse d'être une formalité pour

@@ -347,12 +347,12 @@ if [ -n "${OPERATOR}" ] && [ "${OPERATOR}" != "(unset)" ]; then
   #
   # cloudbuild.builds.approve n'est PAS inclus dans roles/cloudbuild.builds.editor :
   # GCP sépare délibérément « lancer un déploiement » de « l'autoriser ». C'est
-  # ce qui permet d'instaurer un double regard — le consultant déclenche,
-  # le référent ALIMA approuve — en n'accordant l'approbation qu'à ce dernier.
+  # ce qui permet d'instaurer un double regard — une personne déclenche, une
+  # autre autorise — en n'accordant l'approbation qu'à la seconde.
   #
-  # Pendant la phase projet, l'opérateur cumule les deux. Au transfert de
-  # compétences, il suffira de lui retirer ce rôle et de l'accorder au référent
-  # ALIMA : APPROVER="<email>" ./scripts/01-setup-gcp.sh
+  # Par défaut l'opérateur cumule les deux rôles : l'approbation n'est alors
+  # qu'une formalité. Pour la rendre effective, désigner un approbateur
+  # distinct : APPROVER="<email>" ./scripts/01-setup-gcp.sh
   APPROVER="${APPROVER:-${OPERATOR}}"
   run gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
     --member="user:${APPROVER}" \

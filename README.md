@@ -9,6 +9,23 @@ co-localisé à Cloud SQL PostgreSQL 16 managé.
 
 ---
 
+## Par où commencer
+
+| Objectif | Où aller |
+|---|---|
+| Exploiter l'instance — journaux, redémarrage, diagnostic | [`docs/aide-memoire.md`](docs/aide-memoire.md) |
+| Déployer une nouvelle version | [Déploiement](#déploiement), puis l'aide-mémoire |
+| Travailler en local sur l'image ou la configuration | [Démarrage local](#démarrage-local) |
+| Comprendre un choix technique avant de le modifier | [`docs/architecture-et-cicd.md`](docs/architecture-et-cicd.md) |
+| Recréer l'infrastructure | [`docs/provisionnement-gcp.md`](docs/provisionnement-gcp.md) |
+
+**Une règle vaut d'être connue avant tout le reste** : les commandes `gcloud` se lancent
+depuis un poste de travail, jamais depuis la VM. Le compte de service de la VM est
+volontairement limité à la lecture des secrets et du registre — toute commande
+d'administration y échouera.
+
+---
+
 ## Structure
 
 ```text
@@ -171,9 +188,19 @@ ensemble.
 
 ---
 
-## Contacts
+## Repères
 
-| Rôle | Personne |
+| | |
 |---|---|
-| Référent SI ALIMA | Nicolas DIEME |
-| Consultant | Mamadou Tafsir DIALLO — <diallotafsir52@gmail.com> |
+| Application | <https://dhis2-test.alima.ngo> |
+| Projet GCP | `alima-dhis2-prod` — `europe-west1` |
+| Compte d'exploitation | `dhis2@alima.ngo` — également destinataire des alertes TLS |
+| Dépôt | `gh-alima/alima-dhis2` |
+
+Les rôles et les habilitations se lisent dans la politique IAM du projet, qui fait foi :
+
+```bash
+gcloud projects get-iam-policy alima-dhis2-prod \
+  --flatten="bindings[].members" \
+  --format="table(bindings.role,bindings.members)"
+```
