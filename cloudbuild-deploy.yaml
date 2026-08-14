@@ -75,15 +75,33 @@ steps:
 
         # Les deux images doivent exister dans le registre avant qu'on touche
         # à la VM.
+        #
+        # Le message d'erreur de gcloud est CONSERVÉ et réaffiché. Le masquer
+        # revenait à traduire toute défaillance — droits insuffisants, API
+        # indisponible, réseau — par « image introuvable », en envoyant chercher
+        # au mauvais endroit. Les tags réellement présents sont listés dans la
+        # foulée : au moment où l'on se trompe de tag, on a la bonne liste sous
+        # les yeux.
         BASE="${_AR_HOST}/${PROJECT_ID}/${_AR_REPO}"
         for IMG in dhis2-core dhis2-nginx; do
           echo "Vérification de $${IMG}:${_IMAGE_TAG}..."
-          gcloud artifacts docker images describe \
-            "$${BASE}/$${IMG}:${_IMAGE_TAG}" >/dev/null 2>&1 || {
-              echo "ERREUR : image introuvable dans Artifact Registry :" >&2
-              echo "         $${BASE}/$${IMG}:${_IMAGE_TAG}" >&2
-              exit 1
-            }
+          if ERR=$(gcloud artifacts docker images describe \
+                     "$${BASE}/$${IMG}:${_IMAGE_TAG}" 2>&1 >/dev/null); then
+            echo "  présente"
+          else
+            echo "" >&2
+            echo "ERREUR : impossible de valider l'image" >&2
+            echo "         $${BASE}/$${IMG}:${_IMAGE_TAG}" >&2
+            echo "" >&2
+            echo "  Réponse d'Artifact Registry :" >&2
+            echo "$${ERR}" | sed 's/^/    /' >&2
+            echo "" >&2
+            echo "  Tags présents pour $${IMG} :" >&2
+            gcloud artifacts docker images list "$${BASE}/$${IMG}" \
+              --include-tags --format='value(tags)' 2>&1 \
+              | tr ',' '\n' | sed 's/^ *//' | sed 's/^/    /' >&2 || true
+            exit 1
+          fi
         done
 
         echo "Cible : PRODUCTION — VM ${_VM}"
