@@ -42,6 +42,18 @@ SA_PATH="projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}"
 TRIGGER_BUILD="dhis2-build"
 TRIGGER_DEPLOY="dhis2-deploy-prod"
 
+# Valeur par défaut de _IMAGE_TAG sur le déclencheur de déploiement.
+#
+# La substitution est déclarée SUR LE DÉCLENCHEUR, et pas seulement dans le
+# fichier de configuration : c'est ce qui la rend visible et modifiable dans la
+# boîte de dialogue « Exécuter » de la console. Sans cela, le champ n'apparaît
+# pas et le tag ne peut être fourni qu'en ligne de commande.
+#
+# La valeur par défaut est volontairement invalide : lancer le déclencheur sans
+# la remplacer doit échouer immédiatement, et non déployer quelque chose au
+# hasard.
+TAG_PLACEHOLDER="A_RENSEIGNER"
+
 DRY_RUN="${DRY_RUN:-0}"
 
 log()  { printf '\n\033[1;34m▶ %s\033[0m\n' "$*"; }
@@ -158,6 +170,7 @@ elif [ "${GEN}" = "2" ]; then
     --branch="${BRANCH}" \
     --build-config=cloudbuild-deploy.yaml \
     --require-approval \
+    --substitutions="_IMAGE_TAG=${TAG_PLACEHOLDER}" \
     --service-account="${SA_PATH}"
   ok "${TRIGGER_DEPLOY} — manuel, APPROBATION OBLIGATOIRE"
 else
@@ -170,6 +183,7 @@ else
     --branch="${BRANCH}" \
     --build-config=cloudbuild-deploy.yaml \
     --require-approval \
+    --substitutions="_IMAGE_TAG=${TAG_PLACEHOLDER}" \
     --service-account="${SA_PATH}"
   ok "${TRIGGER_DEPLOY} — manuel, APPROBATION OBLIGATOIRE"
 fi
@@ -208,9 +222,24 @@ cat <<EOF
      └─▶ ${TRIGGER_DEPLOY}  (manuel + APPROBATION)
             └─▶ VM de production
 
-  Lancer un déploiement :
+  Lancer un déploiement — la version est TOUJOURS précisée à la main
+  ------------------------------------------------------------------
+  Depuis la console :
+    Cloud Build → Déclencheurs → ${TRIGGER_DEPLOY} → EXÉCUTER
+    Le champ _IMAGE_TAG s'affiche pré-rempli à « ${TAG_PLACEHOLDER} » :
+    le remplacer par le tag à déployer.
+
+  En ligne de commande :
     gcloud builds triggers run ${TRIGGER_DEPLOY} --region=${REGION} \\
       --branch=${BRANCH} --substitutions=_IMAGE_TAG=<tag>
+
+  Retrouver les tags publiés :
+    gcloud artifacts docker images list \\
+      europe-west1-docker.pkg.dev/${PROJECT_ID}/dhis2-images/dhis2-core \\
+      --include-tags
+
+  Lancer sans renseigner la version échoue immédiatement : la valeur par
+  défaut est volontairement invalide.
 
   ⚠ Un « gcloud builds submit » direct contourne l'approbation : c'est l'IAM,
     et non le déclencheur, qui restreint qui peut déployer (cf. §9.3 du mode

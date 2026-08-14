@@ -50,9 +50,18 @@ steps:
       - |
         set -euo pipefail
 
-        if [ -z "${_IMAGE_TAG}" ]; then
-          echo "ERREUR : _IMAGE_TAG est obligatoire." >&2
-          echo "  Exemple : --substitutions=_IMAGE_TAG=2.41.9.1.20260814.556073b" >&2
+        if [ -z "${_IMAGE_TAG}" ] || [ "${_IMAGE_TAG}" = "A_RENSEIGNER" ]; then
+          echo "ERREUR : la version à déployer n'a pas été précisée." >&2
+          echo "" >&2
+          echo "  Depuis la console : Cloud Build → Déclencheurs →" >&2
+          echo "    dhis2-deploy-prod → EXÉCUTER, puis renseigner _IMAGE_TAG." >&2
+          echo "" >&2
+          echo "  En ligne de commande :" >&2
+          echo "    --substitutions=_IMAGE_TAG=2.41.9.1.20260814.556073b" >&2
+          echo "" >&2
+          echo "  Tags disponibles :" >&2
+          echo "    gcloud artifacts docker images list \\" >&2
+          echo "      ${_AR_HOST}/${PROJECT_ID}/${_AR_REPO}/dhis2-core --include-tags" >&2
           exit 1
         fi
 

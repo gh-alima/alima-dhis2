@@ -365,6 +365,13 @@ Les deux s'exécutent sous le compte de service `sa-dhis2-build`. Le script vér
 coup que l'approbation est bien active sur le déclencheur de production, plutôt que de le
 supposer.
 
+**La version à déployer est toujours saisie à la main.** La substitution `_IMAGE_TAG` est
+déclarée sur le déclencheur lui-même, et pas seulement dans le fichier de configuration :
+c'est ce qui la rend visible et modifiable dans la boîte de dialogue « Exécuter » de la
+console. Sa valeur par défaut, `A_RENSEIGNER`, est volontairement invalide — lancer le
+déclencheur sans la remplacer échoue immédiatement, avec la marche à suivre et la commande
+listant les tags disponibles. Aucun déploiement ne peut donc partir « par défaut ».
+
 Les modifications purement documentaires ne déclenchent pas de construction : une image
 identique sous un nouveau tag n'apporte rien et brouille l'historique du registre.
 
