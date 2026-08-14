@@ -66,15 +66,23 @@ log "Projet ${PROJECT_ID} — région ${REGION} — dépôt ${REPO_OWNER}/${REPO
 gcloud config set project "${PROJECT_ID}" >/dev/null
 [ "${DRY_RUN}" = "1" ] && echo "  MODE DRY-RUN — aucun déclencheur ne sera créé."
 
-# ── Détection du dépôt connecté ──────────────────────────────────────────────
-# Une connexion régionale relève de la 2e génération : le déclencheur se
-# rattache alors à une ressource « repository » complète, et non à un couple
-# propriétaire/nom comme en 1re génération.
+# ── Détection du mode de connexion ───────────────────────────────────────────
+# Cloud Build connaît deux générations de liaison au dépôt, qui ne se pilotent
+# pas de la même façon :
+#
+#   2e génération — connexions et dépôts sont des ressources régionales ; le
+#                   déclencheur se rattache à une ressource « repository »
+#                   complète, via --repository.
+#   1re génération — liaison par l'application GitHub Cloud Build ; le
+#                   déclencheur désigne le dépôt par --repo-owner/--repo-name.
+#
+# On cherche d'abord une ressource de 2e génération ; à défaut, on retombe sur
+# la 1re, qui est le mode le plus répandu.
 log "Recherche du dépôt connecté"
 
 REPO_RESOURCE=""
 for CONN in $(gcloud builds connections list --region="${REGION}" \
-                --format='value(name)' 2>/dev/null); do
+                --format='value(name)' 2>/dev/null || true); do
   CONN_ID="${CONN##*/}"
   FOUND=$(gcloud builds repositories list \
             --connection="${CONN_ID}" --region="${REGION}" \
@@ -82,28 +90,22 @@ for CONN in $(gcloud builds connections list --region="${REGION}" \
           | grep -E "/repositories/${REPO_NAME}$" | head -1 || true)
   if [ -n "${FOUND}" ]; then
     REPO_RESOURCE="${FOUND}"
-    ok "Connexion : ${CONN_ID}"
-    ok "Dépôt     : ${REPO_RESOURCE}"
     break
   fi
 done
 
-if [ -z "${REPO_RESOURCE}" ]; then
-  cat >&2 <<EOF
-
-  ERREUR : aucun dépôt « ${REPO_NAME} » connecté dans la région ${REGION}.
-
-  Connexions présentes dans cette région :
-$(gcloud builds connections list --region="${REGION}" --format='value(name)' 2>/dev/null | sed 's/^/    /' || echo "    (aucune)")
-
-  Connecter le dépôt avant de relancer :
-    https://console.cloud.google.com/cloud-build/triggers/connect?project=${PROJECT_ID}
-
-  Si la connexion existe dans une AUTRE région, relancer avec :
-    REGION=<région> ./scripts/02-setup-triggers.sh
-
-EOF
-  exit 1
+if [ -n "${REPO_RESOURCE}" ]; then
+  GEN=2
+  ok "Connexion de 2e génération"
+  ok "Dépôt : ${REPO_RESOURCE}"
+else
+  GEN=1
+  ok "Aucune ressource de 2e génération — bascule en 1re génération"
+  ok "Dépôt : ${REPO_OWNER}/${REPO_NAME} (application GitHub Cloud Build)"
+  echo ""
+  echo "  Si la création échoue avec « repository not found », c'est que le dépôt"
+  echo "  n'est pas lié à Cloud Build. Le connecter puis relancer :"
+  echo "    https://console.cloud.google.com/cloud-build/triggers/connect?project=${PROJECT_ID}"
 fi
 
 # ── 1. Construction ──────────────────────────────────────────────────────────
@@ -114,12 +116,24 @@ log "Déclencheur de construction"
 
 if trigger_exists "${TRIGGER_BUILD}"; then
   skip "${TRIGGER_BUILD}"
-else
+elif [ "${GEN}" = "2" ]; then
   run gcloud builds triggers create github \
     --name="${TRIGGER_BUILD}" \
     --description="Construit dhis2-core et dhis2-nginx à chaque push sur ${BRANCH}" \
     --region="${REGION}" \
     --repository="${REPO_RESOURCE}" \
+    --branch-pattern="^${BRANCH}$" \
+    --build-config=cloudbuild.yaml \
+    --ignored-files="**/*.md" \
+    --service-account="${SA_PATH}"
+  ok "${TRIGGER_BUILD} — push sur ${BRANCH}, hors **/*.md"
+else
+  run gcloud builds triggers create github \
+    --name="${TRIGGER_BUILD}" \
+    --description="Construit dhis2-core et dhis2-nginx à chaque push sur ${BRANCH}" \
+    --region="${REGION}" \
+    --repo-owner="${REPO_OWNER}" \
+    --repo-name="${REPO_NAME}" \
     --branch-pattern="^${BRANCH}$" \
     --build-config=cloudbuild.yaml \
     --ignored-files="**/*.md" \
@@ -135,12 +149,24 @@ log "Déclencheur de déploiement"
 
 if trigger_exists "${TRIGGER_DEPLOY}"; then
   skip "${TRIGGER_DEPLOY}"
-else
+elif [ "${GEN}" = "2" ]; then
   run gcloud builds triggers create manual \
     --name="${TRIGGER_DEPLOY}" \
     --description="Déploie un tag existant en PRODUCTION — approbation obligatoire" \
     --region="${REGION}" \
     --repository="${REPO_RESOURCE}" \
+    --branch="${BRANCH}" \
+    --build-config=cloudbuild-deploy.yaml \
+    --require-approval \
+    --service-account="${SA_PATH}"
+  ok "${TRIGGER_DEPLOY} — manuel, APPROBATION OBLIGATOIRE"
+else
+  run gcloud builds triggers create manual \
+    --name="${TRIGGER_DEPLOY}" \
+    --description="Déploie un tag existant en PRODUCTION — approbation obligatoire" \
+    --region="${REGION}" \
+    --repo="https://github.com/${REPO_OWNER}/${REPO_NAME}" \
+    --repo-type=GITHUB \
     --branch="${BRANCH}" \
     --build-config=cloudbuild-deploy.yaml \
     --require-approval \
