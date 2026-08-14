@@ -139,32 +139,56 @@ steps:
         echo "Contenu de l'archive :"
         tar tzf /workspace/stack.tar.gz | sed 's/^/  /'
 
-        gcloud compute scp /workspace/stack.tar.gz \
-          "$${VM}:/tmp/stack.tar.gz" \
-          --zone=${_ZONE} --tunnel-through-iap --quiet
-
-        # Extraction dans un répertoire de travail, puis mise en place par copie.
-        # L'ancienne version extrayait directement dans le répertoire applicatif
-        # et réarrangeait ensuite par mv et rmdir : chaque étape supposait la
-        # précédente réussie, sans jamais le vérifier ni le dire.
+        # La mise en place distante part en FICHIER, exécuté par « sudo bash ».
         #
+        # Écrite en --command multi-lignes, elle ne se comportait pas comme un
+        # script : le « set -euo pipefail » de tête restait sans effet, les
+        # échecs de tar et de cp passaient inaperçus, et seul chmod finissait
+        # par signaler un symptôme — sans jamais désigner la cause. Un fichier
+        # transféré puis exécuté supprime toute ambiguïté sur ce qui tourne, et
+        # sur le shell qui l'interprète.
+        cat > /workspace/remote-install.sh <<'REMOTE'
+        #!/usr/bin/env bash
+        set -euo pipefail
+
+        APP_DIR="__REMOTE_DIR__"
+        STAGING=/tmp/stack
+
+        echo "--- archive reçue ---"
+        ls -l /tmp/stack.tar.gz
+
+        rm -rf "$$STAGING"
+        mkdir -p "$$STAGING"
+        tar xzf /tmp/stack.tar.gz -C "$$STAGING"
+
+        echo "--- contenu extrait ---"
+        find "$$STAGING" -type f | sort
+
+        mkdir -p "$$APP_DIR"
+        cp -f "$$STAGING/docker/docker-compose.yml" "$$APP_DIR/docker-compose.yml"
+
         # scripts/ est remplacé en entier plutôt que fusionné : un script retiré
         # du dépôt doit disparaître de la VM, sans quoi une version obsolète y
         # survivrait indéfiniment.
+        rm -rf "$$APP_DIR/scripts"
+        cp -r "$$STAGING/scripts" "$$APP_DIR/scripts"
+        chmod +x "$$APP_DIR"/scripts/*.sh
+
+        rm -rf "$$STAGING" /tmp/stack.tar.gz
+
+        echo "--- mis en place ---"
+        ls -l "$$APP_DIR"
+        ls -l "$$APP_DIR/scripts"
+        REMOTE
+
+        sed -i 's|^        ||; s|__REMOTE_DIR__|${_REMOTE_DIR}|' /workspace/remote-install.sh
+
+        gcloud compute scp /workspace/stack.tar.gz /workspace/remote-install.sh \
+          "$${VM}:/tmp/" \
+          --zone=${_ZONE} --tunnel-through-iap --quiet
+
         gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
-          --command "set -euo pipefail
-            rm -rf /tmp/stack
-            mkdir -p /tmp/stack
-            tar xzf /tmp/stack.tar.gz -C /tmp/stack
-            sudo mkdir -p ${_REMOTE_DIR}
-            sudo cp -f /tmp/stack/docker/docker-compose.yml ${_REMOTE_DIR}/docker-compose.yml
-            sudo rm -rf ${_REMOTE_DIR}/scripts
-            sudo cp -r /tmp/stack/scripts ${_REMOTE_DIR}/scripts
-            sudo chmod +x ${_REMOTE_DIR}/scripts/*.sh
-            rm -rf /tmp/stack /tmp/stack.tar.gz
-            echo Contenu deploye :
-            ls -l ${_REMOTE_DIR}
-            ls -l ${_REMOTE_DIR}/scripts"
+          --command "sudo bash /tmp/remote-install.sh"
 
   # ── 3. Génération du .env depuis Secret Manager ────────────────────────────
   # Les secrets ne transitent jamais par ce pipeline : c'est la VM qui les lit
