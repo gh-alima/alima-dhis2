@@ -221,10 +221,17 @@ par défaut sous Linux :
 ├── files/             magasin de fichiers (filestore) — documents, images, pièces jointes
 └── logs/              journaux applicatifs DHIS2
     ├── dhis.log                    journal principal (inclut les traitements de fond)
+    ├── dhis-audit.log              journal d'audit
     ├── dhis-analytics-table.log    génération des tables analytiques
     ├── dhis-data-exchange.log      échanges de données
-    └── dhis-data-sync.log          synchronisations
+    ├── dhis-data-sync.log          synchronisations
+    ├── dhis-metadata-sync.log      synchronisation des métadonnées
+    └── dhis-push-analysis.log      analyses poussées
 ```
+
+> Liste relevée sur une instance 2.41.9.1 réelle. Elle dépasse les quatre
+> fichiers documentés par DHIS2 et varie d'une version à l'autre : la collecte
+> des journaux utilise donc un motif `*.log`, jamais une énumération figée.
 
 Ces répertoires **doivent survivre** au remplacement du conteneur — ce qui est précisément
 ce qui se produit à chaque déploiement. D'où trois volumes Docker nommés.
@@ -524,6 +531,9 @@ s'appliquer **palier par palier** :
 
 ```
 2.35 ──▶ 2.36 ──▶ 2.38 ──▶ 2.40 ──▶ 2.41
+ │
+ └── image 2.35.14 (seul tag publié pour cette ligne),
+     appliquée directement sur la base 2.35.0
 ```
 
 Chaque palier suit la même mécanique :
@@ -538,6 +548,32 @@ Chaque palier suit la même mécanique :
 Cette conception sert directement cet objectif : chaque palier est une image traçable,
 construite par la même chaîne, et l'on conserve à chaque étape la possibilité de repartir
 du palier précédent.
+
+### 9.0 Contrainte découverte : les images disponibles en amont
+
+Vérification faite sur le registre officiel `dhis2/core` :
+
+| Ligne | Tags publiés | Conséquence |
+|---|---|---|
+| 2.35 | **`2.35.14` uniquement** | La version actuelle d'ALIMA (2.35.0) n'a **aucune image officielle** |
+| 2.36 | 2.36.x complet | — |
+| 2.38 / 2.40 | complets | — |
+| 2.41 | jusqu'à `2.41.9.1` | version cible retenue |
+
+Deux implications directes :
+
+1. **Le palier 2.35 utilise l'image 2.35.14.** Les correctifs d'une même ligne mineure
+   n'apportent pas de changement de schéma : l'image 2.35.14 démarre donc directement sur
+   la base 2.35.0 d'ALIMA, sans étape intermédiaire. La chaîne de paliers reste inchangée.
+2. **La surcouche Tomcat n'est pas portable sur toute la chaîne.** Les images 2.35.14
+   sont construites sur **Tomcat 8.5/9 avec JDK 8 ou 11**, alors que `docker/server.xml`
+   vise Tomcat 9/10 (Java 17, cible 2.41). Sur les premiers paliers, il faut donc
+   **neutraliser le `COPY` de `server.xml`** dans le Dockerfile et ne le réactiver qu'à
+   partir de 2.40. Les paliers intermédiaires ne servent qu'à faire migrer le schéma :
+   ils n'ont pas besoin du réglage fin du connecteur.
+
+Le premier point ne change rien à la conception ; le second demande une variante de
+Dockerfile pour les paliers anciens.
 
 **Règle absolue rappelée** : la base de production 2.35 n'est jamais modifiée. La
 migration se déroule intégralement sur une copie, en parallèle, jusqu'à la bascule
