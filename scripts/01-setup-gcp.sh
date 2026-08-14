@@ -168,8 +168,9 @@ else
     --retained-backups-count=30 \
     --maintenance-window-day=SUN \
     --maintenance-window-hour=3 \
-    --database-flags=max_connections=200
-  ok "Instance ${SQL_INSTANCE} (IP privée uniquement, PITR activé)"
+    --database-flags=max_connections=200 \
+    --deletion-protection
+  ok "Instance ${SQL_INSTANCE} (IP privée, PITR, protection contre la suppression)"
 fi
 
 ensure "Base ${SQL_DB_NAME}" \
@@ -178,22 +179,40 @@ ensure "Base ${SQL_DB_NAME}" \
 
 # Le mot de passe est généré ici et n'est JAMAIS affiché : il part directement
 # dans Secret Manager.
+#
+# Le secret et l'utilisateur PostgreSQL sont traités en DEUX étapes distinctes.
+# Les imbriquer casserait l'idempotence : si le script s'interrompt entre la
+# création du secret et celle de l'utilisateur, une relance verrait le secret
+# présent, sauterait tout le bloc, et laisserait la base sans compte applicatif.
 if gcloud secrets describe dhis2-db-password >/dev/null 2>&1; then
   skip "Secret dhis2-db-password"
+elif [ "${DRY_RUN}" = "1" ]; then
+  echo "  [dry-run] génération du mot de passe et création du secret"
 else
-  if [ "${DRY_RUN}" = "1" ]; then
-    echo "  [dry-run] génération du mot de passe et création du secret"
+  DB_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
+  printf '%s' "${DB_PASSWORD}" | \
+    gcloud secrets create dhis2-db-password --data-file=- --replication-policy=automatic
+  unset DB_PASSWORD
+  ok "Secret dhis2-db-password"
+fi
+
+# L'utilisateur PostgreSQL est aligné sur le mot de passe stocké, quel que soit
+# l'état précédent : création s'il n'existe pas, réalignement sinon.
+if [ "${DRY_RUN}" = "1" ]; then
+  echo "  [dry-run] création ou réalignement de l'utilisateur ${SQL_DB_USER}"
+else
+  DB_PASSWORD=$(gcloud secrets versions access latest --secret=dhis2-db-password)
+  if gcloud sql users list --instance="${SQL_INSTANCE}" \
+       --format='value(name)' 2>/dev/null | grep -qx "${SQL_DB_USER}"; then
+    gcloud sql users set-password "${SQL_DB_USER}" --instance="${SQL_INSTANCE}" \
+      --password="${DB_PASSWORD}" >/dev/null
+    ok "Utilisateur ${SQL_DB_USER} (mot de passe réaligné sur le secret)"
   else
-    DB_PASSWORD=$(openssl rand -base64 32 | tr -d '/+=' | head -c 32)
-    printf '%s' "${DB_PASSWORD}" | \
-      gcloud secrets create dhis2-db-password --data-file=- --replication-policy=automatic
     gcloud sql users create "${SQL_DB_USER}" --instance="${SQL_INSTANCE}" \
-      --password="${DB_PASSWORD}" 2>/dev/null || \
-      gcloud sql users set-password "${SQL_DB_USER}" --instance="${SQL_INSTANCE}" \
-        --password="${DB_PASSWORD}"
-    unset DB_PASSWORD
+      --password="${DB_PASSWORD}" >/dev/null
+    ok "Utilisateur ${SQL_DB_USER} créé"
   fi
-  ok "Utilisateur ${SQL_DB_USER} et secret dhis2-db-password"
+  unset DB_PASSWORD
 fi
 
 # ── 5. Secrets ───────────────────────────────────────────────────────────────

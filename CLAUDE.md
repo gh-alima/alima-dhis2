@@ -36,7 +36,7 @@ Utilisateurs ──HTTPS──▶ Nginx (TLS) ──▶ Conteneur Docker DHIS2 2
 Ressources GCP :
 - **VPC** `vpc-dhis2` (sous-réseau `10.10.0.0/24`), peering Private Service Access vers Cloud SQL — la base n'a **aucune IP publique**
 - **Pare-feu** : SSH uniquement via IAP (`35.235.240.0/20`) ; HTTP/HTTPS entrants sur la VM taguée `http-server`
-- **Artifact Registry** : dépôt Docker `dhis2-images` (europe-west1), politique de nettoyage : 5 versions conservées, purge > 30 jours
+- **Artifact Registry** : dépôt Docker `dhis2-images` (europe-west1), politique de nettoyage : 10 versions conservées, purge > 30 jours (les versions conservées priment sur la purge — un tag encore utile au retour arrière n'est jamais supprimé)
 - **Secret Manager** : mot de passe BDD et secrets de configuration (jamais dans le Git)
 - **Cloud Storage** : exports logiques hebdomadaires de la base (rétention 30 jours) + snapshots quotidiens de la VM
 
