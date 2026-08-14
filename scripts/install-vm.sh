@@ -169,11 +169,12 @@ logging:
   receivers:
     dhis2_app:
       type: files
+      # Motif générique plutôt qu'une liste nominative : DHIS2 produit plus de
+      # fichiers que les quatre documentés (audit, metadata-sync,
+      # push-analysis…) et la liste varie selon les versions. Une énumération
+      # figée laisserait des journaux non collectés, sans que rien ne le signale.
       include_paths:
-        - ${VOL_PATH}/dhis.log
-        - ${VOL_PATH}/dhis-analytics-table.log
-        - ${VOL_PATH}/dhis-data-exchange.log
-        - ${VOL_PATH}/dhis-data-sync.log
+        - ${VOL_PATH}/*.log
   service:
     pipelines:
       dhis2:
