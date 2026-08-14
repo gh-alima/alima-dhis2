@@ -1,4 +1,8 @@
 {
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
   "permissions": {
     "allow": [
       "Bash(git add *)",
@@ -6,7 +10,9 @@
       "Bash(awk '{print \"  \"$1\"  \"$4}')",
       "Bash(bash -n scripts/01-setup-gcp.sh)",
       "Bash(awk '{print $4}')",
-      "Bash(grep -oE 'secret \"\\\\$\\\\{SECRET_PREFIX\\\\}-[a-z-]+\"' scripts/render-env.sh)"
+      "Bash(grep -oE 'secret \"\\\\$\\\\{SECRET_PREFIX\\\\}-[a-z-]+\"' scripts/render-env.sh)",
+      "Bash(grep -inE '\\(password|secret|api[_-]?key|token\\)\\\\s*=\\\\s*[A-Za-z0-9+/]{16,}')",
+      "Bash(git config *)"
     ]
   }
 }
