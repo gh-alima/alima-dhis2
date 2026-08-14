@@ -325,7 +325,7 @@ gcloud compute ssh vm-dhis2-app \
 
 ```bash
 chmod +x ~/scripts/*.sh
-sudo DOMAIN=dhis2-test.alima.ngo ACME_EMAIL=<email-technique-alima> ~/scripts/install-vm.sh
+sudo DOMAIN=dhis2-test.alima.ngo ACME_EMAIL=dhis2@alima.ngo ~/scripts/install-vm.sh
 ```
 
 `install-vm.sh` met à jour le système, installe Docker et `gcloud`, vérifie que le compte
