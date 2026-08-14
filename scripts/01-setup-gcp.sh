@@ -153,8 +153,14 @@ log "Cloud SQL PostgreSQL 16"
 if gcloud sql instances describe "${SQL_INSTANCE}" >/dev/null 2>&1; then
   skip "Instance ${SQL_INSTANCE}"
 else
+  # --edition=ENTERPRISE est OBLIGATOIRE ici. Sans ce drapeau, Cloud SQL crée
+  # l'instance en édition ENTERPRISE_PLUS, qui refuse les paliers personnalisés
+  # db-custom-* et n'accepte que les db-perf-optimized-*, sensiblement plus
+  # coûteux. L'édition ENTERPRISE couvre le besoin d'ALIMA : PITR, sauvegardes
+  # automatiques et haute disponibilité optionnelle.
   run gcloud sql instances create "${SQL_INSTANCE}" \
     --database-version=POSTGRES_16 \
+    --edition=ENTERPRISE \
     --tier="${SQL_TIER}" \
     --region="${REGION}" \
     --storage-size="${SQL_DISK_SIZE}" \
