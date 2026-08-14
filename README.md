@@ -97,13 +97,26 @@ arrière consiste à relancer ce même déploiement avec le tag précédent.
 
 ## Provisionnement
 
+📖 **Mode opératoire complet, pas à pas :
+[`docs/provisionnement-gcp.md`](docs/provisionnement-gcp.md)** — installation de gcloud,
+authentification, facturation, exécution, vérifications et écarts connus.
+
+En résumé :
+
 ```bash
-./scripts/01-setup-gcp.sh        # VPC, Cloud SQL, Artifact Registry, secrets, VM
-./scripts/install-vm.sh          # à exécuter sur la VM : Docker, volumes, agent Ops
+# Depuis Git Bash ou WSL — PAS depuis PowerShell (scripts bash)
+export PROJECT_ID=alima-dhis2-prod
+export DHIS2_FQDN=https://dhis2.alima.ngo
+
+DRY_RUN=1 ./scripts/01-setup-gcp.sh   # répétition à blanc — toujours commencer par là
+./scripts/01-setup-gcp.sh             # provisionnement réel (~20 min, ressources facturées)
 ```
 
+Puis, sur la VM : `sudo ./scripts/install-vm.sh` (Docker, volumes, TLS, agent Ops).
+
 `scripts/01-setup-gcp.sh` est la **source de vérité** du provisionnement : toute
-modification d'infrastructure doit y être répercutée.
+modification d'infrastructure doit y être répercutée. Il est idempotent — en cas
+d'interruption, il suffit de le relancer.
 
 ---
 

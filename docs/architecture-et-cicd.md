@@ -637,6 +637,7 @@ Deux validations conditionnent le Go-Live et sont propres à ALIMA :
 │   └── 99-cleanup-gcp.sh         suppression de l'infrastructure
 └── docs/
     ├── architecture-et-cicd.md   ce document
+    ├── provisionnement-gcp.md    mode opératoire pas à pas de l'infrastructure
     ├── variables-environnement.md  taxonomie complète des variables DHIS2_*
     ├── plan-migration.md         déroulé des paliers et procédures de bascule
     └── exploitation.md           supervision, sauvegardes, incidents courants
