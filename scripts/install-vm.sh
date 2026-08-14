@@ -179,6 +179,23 @@ systemctl daemon-reload
 systemctl enable --now certbot-renew.timer
 ok "Renouvellement TLS automatique activé"
 
+# Le paquet Debian de certbot installe SON PROPRE timer, qui lance
+# « certbot renew » sans arrêter Nginx. Or le certificat a été obtenu en mode
+# standalone : le renouvellement exige le port 80, que le conteneur Nginx
+# occupe. Ce timer échouerait donc systématiquement — silencieusement, et en
+# masquant le fait que le nôtre, lui, fonctionne.
+#
+# Deux mécanismes concurrents pour la même tâche, dont un condamné à échouer :
+# on ne garde que le nôtre, qui encadre le renouvellement d'un arrêt/redémarrage
+# de Nginx.
+for UNIT in certbot.timer snap.certbot.renew.timer; do
+  if systemctl list-unit-files "${UNIT}" >/dev/null 2>&1 \
+     && systemctl is-enabled "${UNIT}" >/dev/null 2>&1; then
+    systemctl disable --now "${UNIT}" >/dev/null 2>&1 || true
+    ok "Timer concurrent ${UNIT} désactivé"
+  fi
+done
+
 # ── 8. Agent Ops ─────────────────────────────────────────────────────────────
 # DHIS2 abandonne progressivement la journalisation vers la sortie standard :
 # les journaux applicatifs se lisent sous DHIS2_HOME/logs, donc dans le volume
@@ -216,13 +233,42 @@ systemctl restart google-cloud-ops-agent
 ok "Journaux DHIS2 collectés depuis ${VOL_PATH}"
 
 # ── Récapitulatif ────────────────────────────────────────────────────────────
-log "VM prête"
+# Le récapitulatif rend compte de l'état RÉEL, il ne récite pas ce que le script
+# était censé faire. Une étape peut avoir échoué sans interrompre l'exécution —
+# l'obtention du certificat, notamment, est volontairement non bloquante.
+log "État de la VM"
+
+CERT_OK=0
+[ -f /etc/letsencrypt/live/dhis2/fullchain.pem ] && CERT_OK=1
+
+_etat() { [ "$1" = "1" ] && printf 'OK' || printf 'MANQUANT'; }
+
 cat <<EOF
 
   Répertoire applicatif : ${APP_DIR}
-  Volumes               : dhis2-home, dhis2-files, dhis2-logs
-  TLS                   : /etc/letsencrypt/live/dhis2/
-  Journaux              : collectés vers Cloud Logging
+  Volumes               : $(docker volume ls --format '{{.Name}}' | grep -c '^dhis2-')/3 présents
+  Certificat TLS        : $(_etat "${CERT_OK}")
+  Renouvellement TLS    : $(systemctl is-active certbot-renew.timer 2>/dev/null || echo inactif)
+  Agent Ops             : $(systemctl is-active google-cloud-ops-agent 2>/dev/null || echo inactif)
+  Espace disque         : $(df -h / | awk 'NR==2 {print $2" total, "$4" libre"}')
+EOF
+
+if [ "${CERT_OK}" = "0" ]; then
+  cat >&2 <<EOF
+
+  ⛔ CERTIFICAT ABSENT — le déploiement échouera : Nginx refuse de démarrer
+     sans certificat.
+
+     Vérifier que ${DOMAIN} pointe vers l'adresse publique de cette VM,
+     que le port 80 est joignable depuis Internet, puis relancer :
+
+       sudo certbot certonly --standalone --cert-name dhis2 -d ${DOMAIN}
+
+EOF
+  exit 1
+fi
+
+cat <<EOF
 
   Le premier déploiement peut maintenant être lancé depuis Cloud Build :
 
