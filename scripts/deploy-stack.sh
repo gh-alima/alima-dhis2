@@ -38,9 +38,30 @@ echo ""
 echo "=== Authentification au registre ==="
 gcloud auth configure-docker "${AR_HOST}" --quiet
 
+# Le « pull » précède l'arrêt : l'image est en place avant que le service ne
+# s'interrompe, ce qui réduit l'indisponibilité au strict démarrage.
 echo ""
 echo "=== Récupération des images ==="
 docker compose pull
+
+# Arrêt puis redémarrage, plutôt qu'un simple « up -d ».
+#
+# « up -d » ne recrée un conteneur que si sa définition ou son image a changé.
+# Redéployer le même tag serait donc sans effet — or c'est exactement ce qu'on
+# veut pouvoir faire : forcer un redémarrage propre après un changement de
+# secret, une modification de configuration ou un incident.
+#
+# ⚠ JAMAIS « down -v ». L'option -v supprimerait les volumes nommés, donc le
+#   magasin de fichiers DHIS2 — irrécupérable, et non couvert par les
+#   sauvegardes PostgreSQL. Sans -v, « down » ne touche qu'aux conteneurs et au
+#   réseau ; les volumes survivent.
+#
+# Le délai d'arrêt est porté à 60 s : Tomcat a besoin de temps pour fermer ses
+# connexions à la base. Passé le délai par défaut de 10 s, il serait tué net,
+# au risque de laisser des transactions en suspens.
+echo ""
+echo "=== Arrêt de la pile ==="
+docker compose down --timeout 60
 
 echo ""
 echo "=== Démarrage ==="

@@ -12,6 +12,13 @@
 #   Sauvegarde   : docker compose --profile backup run --rm backup-filestore
 # =============================================================================
 
+# Nom de projet fixé explicitement. Sans cela, Compose le déduit du répertoire
+# contenant ce fichier — « docker » en local, « dhis2 » sur la VM — et préfixe
+# les volumes en conséquence. Les noms de volumes différaient donc d'un
+# environnement à l'autre, ce qui rendait toute référence externe (agent Ops,
+# sauvegardes, diagnostic) dépendante de l'endroit d'où l'on travaille.
+name: dhis2
+
 services:
 
   # ── Application ────────────────────────────────────────────────────────────

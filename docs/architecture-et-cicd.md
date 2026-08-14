@@ -244,6 +244,13 @@ ce qui se produit à chaque déploiement. D'où trois volumes Docker nommés.
 | `dhis2-files` | `/opt/dhis2/files` | magasin de fichiers | **oui — hebdomadaire vers Cloud Storage + snapshot quotidien** | **oui — irrécupérable si perdu** |
 | `dhis2-logs` | `/opt/dhis2/logs` | journaux applicatifs | non — rotation en place | non |
 
+> **Nom effectif des volumes.** Compose préfixe les volumes du nom de projet. Celui-ci
+> est fixé à `dhis2` en tête du `docker-compose.yml` : les volumes s'appellent donc
+> `dhis2_dhis2-home`, `dhis2_dhis2-files` et `dhis2_dhis2-logs`, identiquement en local et
+> sur la VM. Sans ce nom fixé, il variait selon le répertoire de travail, et toute
+> référence externe — agent Ops, sauvegardes, diagnostic — dépendait de l'endroit d'où
+> l'on travaillait.
+
 Trois volumes plutôt qu'un seul, parce que leurs **cycles de vie diffèrent** : les
 fichiers sont irremplaçables et doivent être sauvegardés ; les journaux sont volumineux,
 rotatifs et jetables ; `dhis.conf` est reconstruit à chaque démarrage. Les mélanger

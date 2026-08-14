@@ -98,22 +98,22 @@ gcloud auth configure-docker europe-west1-docker.pkg.dev --quiet
 ok "Docker authentifié auprès d'Artifact Registry"
 
 # ── 5. Volumes de persistance ────────────────────────────────────────────────
-# Créés explicitement ici plutôt que laissés à docker compose : on veut qu'ils
-# existent avant le premier déploiement et qu'ils survivent à un
-# « docker compose down -v » malencontreux sur les autres ressources.
+# Les volumes ne sont PAS créés ici : docker compose s'en charge au premier
+# déploiement, en les préfixant du nom de projet — dhis2_dhis2-files, etc.
+#
+# Les créer à l'avance sous leur nom court produisait des orphelins que compose
+# n'utilisait jamais, tout en donnant l'illusion que la persistance était en
+# place. L'agent Ops surveillait d'ailleurs l'un d'eux, resté vide : aucun
+# journal applicatif n'était collecté, sans le moindre signal.
 log "Volumes de persistance"
-for VOL in dhis2-home dhis2-files dhis2-logs; do
-  if docker volume inspect "${VOL}" >/dev/null 2>&1; then
-    ok "Volume ${VOL} déjà présent"
-  else
-    docker volume create "${VOL}" >/dev/null
-    ok "Volume ${VOL} créé"
-  fi
-done
+echo "  Créés par docker compose au premier déploiement :"
+echo "    dhis2_dhis2-home   configuration générée"
+echo "    dhis2_dhis2-files  magasin de fichiers"
+echo "    dhis2_dhis2-logs   journaux applicatifs"
 
 cat <<'WARN'
 
-  ⚠ RAPPEL — le volume dhis2-files contient le magasin de fichiers DHIS2.
+  ⚠ RAPPEL — le volume dhis2_dhis2-files contient le magasin de fichiers DHIS2.
     Il n'est PAS couvert par les sauvegardes PostgreSQL. Sa perte rend
     irrécupérables toutes les pièces jointes, quel que soit l'état de la base.
     Sauvegarde : scripts/backup-filestore.sh (hebdomadaire).
@@ -207,7 +207,15 @@ if ! systemctl is-active --quiet google-cloud-ops-agent; then
   rm -f add-google-cloud-ops-agent-repo.sh
 fi
 
-VOL_PATH="$(docker volume inspect dhis2-logs --format '{{.Mountpoint}}')"
+# Le chemin est un MOTIF, pas une résolution figée : le volume n'existe pas
+# encore à l'installation — c'est docker compose qui le crée au premier
+# déploiement. Interroger « docker volume inspect » ici échouait, ou pire,
+# renvoyait le chemin d'un volume orphelin resté vide.
+#
+# Le joker en tête absorbe aussi le préfixe de projet, pour que la collecte
+# survive à un changement de nom de projet Compose.
+LOG_GLOB="/var/lib/docker/volumes/*dhis2-logs/_data/*.log"
+
 cat > /etc/google-cloud-ops-agent/config.yaml <<EOF
 logging:
   receivers:
@@ -218,7 +226,7 @@ logging:
       # push-analysis…) et la liste varie selon les versions. Une énumération
       # figée laisserait des journaux non collectés, sans que rien ne le signale.
       include_paths:
-        - ${VOL_PATH}/*.log
+        - ${LOG_GLOB}
   service:
     pipelines:
       dhis2:
@@ -230,7 +238,7 @@ metrics:
         receivers: [hostmetrics]
 EOF
 systemctl restart google-cloud-ops-agent
-ok "Journaux DHIS2 collectés depuis ${VOL_PATH}"
+ok "Journaux DHIS2 collectés depuis ${LOG_GLOB}"
 
 # ── Récapitulatif ────────────────────────────────────────────────────────────
 # Le récapitulatif rend compte de l'état RÉEL, il ne récite pas ce que le script
