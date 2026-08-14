@@ -210,6 +210,13 @@ steps:
                        --output ${_REMOTE_DIR}/.env"
 
   # ── 4. Déploiement ─────────────────────────────────────────────────────────
+  # Comme la vérification, le déploiement est porté par un script présent sur la
+  # VM, appelé par une commande d'une seule ligne.
+  #
+  # Le « cd » ne peut pas se faire côté SSH : le répertoire applicatif est en
+  # 750 propriété de root — il contient le .env, donc le mot de passe de la base
+  # et la clé de chiffrement. C'est le déploiement qui doit passer en root, pas
+  # les permissions qui doivent être relâchées.
   - id: deploy
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
     waitFor: [render-env]
@@ -221,11 +228,7 @@ steps:
         VM=$(cat /workspace/vm.txt)
 
         gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
-          --command "set -euo pipefail
-            cd ${_REMOTE_DIR}
-            sudo docker compose pull
-            sudo docker compose up -d --remove-orphans
-            sudo docker image prune -f --filter 'until=720h'"
+          --command "sudo bash ${_REMOTE_DIR}/scripts/deploy-stack.sh ${_REMOTE_DIR} ${_AR_HOST}"
 
   # ── 5. Vérification active ─────────────────────────────────────────────────
   # Un déploiement n'est annoncé réussi qu'après réponse de l'application.
