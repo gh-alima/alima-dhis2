@@ -786,7 +786,7 @@ de référence publié par l'équipe DHIS2 :
 
 ### En attente d'ALIMA
 
-4. **Enregistrement DNS** `dhis2.alima.ngo` → `34.38.89.219`. Adresse transmise à
+4. **Enregistrement DNS** `dhis2-test.alima.ngo` → `34.38.89.219`. Adresse transmise à
    l'équipe ALIMA. **Bloquant** : sans résolution, pas de certificat TLS, donc pas de
    démarrage de Nginx ni de premier déploiement.
 5. **Volumétrie du magasin de fichiers** de l'instance 2.35 — conditionne le

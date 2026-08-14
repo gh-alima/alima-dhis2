@@ -29,16 +29,42 @@ Conception sous-jacente : [`architecture-et-cicd.md`](architecture-et-cicd.md).
 
 ### Ce qui reste à faire
 
-| # | Action | Responsable | Bloque |
+| # | Action | Responsable | État |
 |---|---|---|---|
-| 1 | **Enregistrement DNS** : `dhis2.alima.ngo` → `34.38.89.219` | **équipe ALIMA** — adresse transmise, en attente | tout le reste |
-| 2 | Copie des scripts et exécution d'`install-vm.sh` sur la VM | consultant | déploiement |
-| 3 | Création des déclencheurs Cloud Build (§9) | consultant | déploiement |
-| 4 | Première construction et premier déploiement (§10) | consultant | — |
+| 1 | **Enregistrement DNS** : `dhis2-test.alima.ngo` → `34.38.89.219` | équipe ALIMA | ✅ **en place**, vérifié le 14/08/2026 |
+| 2 | Copie des scripts et exécution d'`install-vm.sh` sur la VM | consultant | à faire |
+| 3 | Création des déclencheurs Cloud Build (§9) | consultant | à faire |
+| 4 | Premier déploiement (§10) | consultant | à faire |
 
-> **Le point 1 est bloquant.** `certbot` ne peut pas émettre le certificat tant que le
-> domaine ne résout pas vers cette adresse, et Nginx refuse de démarrer sans certificat.
-> Vérifier avant de poursuivre : `dig +short dhis2.alima.ngo`
+### Nom d'hôte : `dhis2-test.alima.ngo`
+
+La nouvelle instance est exposée sous **`dhis2-test.alima.ngo`** pendant toute la durée de
+la migration. `dhis2.alima.ngo` reste le nom de l'instance 2.35 en service, et ne basculera
+qu'au Go-Live.
+
+```text
+dhis2-test.alima.ngo.  300  IN  A  34.38.89.219    ✅ un seul enregistrement
+```
+
+> ⚠ **`dhis2.alima.ngo` résout vers deux adresses**, dont `34.79.172.183` — un hôte GCP
+> tiers présentant un certificat expiré pour `*.octatrader.eu`, sans lien avec ALIMA.
+> Cet enregistrement résiduel devra être supprimé **avant** la bascule : il répartirait la
+> moitié du trafic de production vers un serveur non maîtrisé.
+
+**À faire au Go-Live** — le nom d'hôte est porté par un secret, pas par l'image :
+
+```bash
+# 1. Pointer le secret vers le nom de production
+printf '%s' 'https://dhis2.alima.ngo'   | gcloud secrets versions add dhis2-fqdn --data-file=- --project=alima-dhis2-prod
+
+# 2. Obtenir le certificat pour le nouveau nom, sur la VM
+sudo certbot certonly --standalone --cert-name dhis2 -d dhis2.alima.ngo
+
+# 3. Redéployer le même tag — .env est régénéré, server.base.url suit
+```
+
+Aucune reconstruction d'image n'est nécessaire : `server.base.url` est écrit au démarrage
+du conteneur à partir de `DHIS2_FQDN` (§4 de la conception).
 
 > **Note sur ces valeurs.** Elles sont consignées ici comme référence d'exploitation. Les
 > pipelines et les scripts, eux, restent paramétrés — aucun identifiant d'infrastructure
@@ -167,7 +193,7 @@ export REGION=europe-west1
 export ZONE=europe-west1-b
 
 # URL publique définitive de l'instance — stockée en secret, lue au déploiement
-export DHIS2_FQDN=https://dhis2.alima.ngo
+export DHIS2_FQDN=https://dhis2-test.alima.ngo
 ```
 
 Les autres valeurs (noms des ressources, dimensionnement) sont en tête de
@@ -265,7 +291,7 @@ Points de contrôle :
 
 > ⛔ **Ne pas commencer avant que le DNS résolve.** `install-vm.sh` demande le certificat
 > à Let's Encrypt ; sans résolution, l'émission échoue. Vérifier d'abord :
-> `dig +short dhis2.alima.ngo` doit renvoyer `34.38.89.219`.
+> `dig +short dhis2-test.alima.ngo` doit renvoyer `34.38.89.219`.
 
 **1. Copier les scripts sur la VM** — ils n'y sont pas, le dépôt n'y est pas cloné :
 
@@ -286,7 +312,7 @@ gcloud compute ssh vm-dhis2-app \
 
 ```bash
 chmod +x ~/scripts/*.sh
-sudo DOMAIN=dhis2.alima.ngo ACME_EMAIL=<email-technique-alima> ~/scripts/install-vm.sh
+sudo DOMAIN=dhis2-test.alima.ngo ACME_EMAIL=<email-technique-alima> ~/scripts/install-vm.sh
 ```
 
 `install-vm.sh` met à jour le système, installe Docker et `gcloud`, vérifie que le compte
@@ -434,7 +460,7 @@ gcloud compute addresses describe ip-dhis2-app \
   --region=europe-west1 --format="value(address)"
 
 # Vérifier la propagation avant de poursuivre
-dig +short dhis2.alima.ngo
+dig +short dhis2-test.alima.ngo
 ```
 
 > **Pas d'environnement de test hébergé.** C'est une décision assumée pour contenir le

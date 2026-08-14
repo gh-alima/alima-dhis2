@@ -258,7 +258,7 @@ fi
 # pour que render-env.sh n'ait qu'une seule source à interroger.
 ensure "Secret dhis2-fqdn" \
   gcloud secrets describe dhis2-fqdn \
-  -- bash -c "printf '%s' '${DHIS2_FQDN:-https://dhis2.alima.ngo}' | gcloud secrets create dhis2-fqdn --data-file=- --replication-policy=automatic"
+  -- bash -c "printf '%s' '${DHIS2_FQDN:-https://dhis2-test.alima.ngo}' | gcloud secrets create dhis2-fqdn --data-file=- --replication-policy=automatic"
 
 # ── 6. Artifact Registry ─────────────────────────────────────────────────────
 log "Artifact Registry"
@@ -425,7 +425,7 @@ run gcloud compute disks add-resource-policies "${VM_NAME}" \
 # ── Récapitulatif ────────────────────────────────────────────────────────────
 # Un enregistrement DNS de type A porte un nom d'hôte, pas une URL : on retire
 # le schéma et tout chemin éventuel de DHIS2_FQDN.
-DHIS2_HOSTNAME="${DHIS2_FQDN:-https://dhis2.alima.ngo}"
+DHIS2_HOSTNAME="${DHIS2_FQDN:-https://dhis2-test.alima.ngo}"
 DHIS2_HOSTNAME="${DHIS2_HOSTNAME#*://}"
 DHIS2_HOSTNAME="${DHIS2_HOSTNAME%%/*}"
 

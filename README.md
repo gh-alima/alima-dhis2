@@ -111,7 +111,7 @@ En résumé :
 ```bash
 # Depuis Git Bash ou WSL — PAS depuis PowerShell (scripts bash)
 export PROJECT_ID=alima-dhis2-prod
-export DHIS2_FQDN=https://dhis2.alima.ngo
+export DHIS2_FQDN=https://dhis2-test.alima.ngo
 
 DRY_RUN=1 ./scripts/01-setup-gcp.sh   # répétition à blanc — toujours commencer par là
 ./scripts/01-setup-gcp.sh             # provisionnement réel (~20 min, ressources facturées)

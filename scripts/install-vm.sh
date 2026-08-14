@@ -12,7 +12,7 @@
 set -euo pipefail
 
 APP_DIR="/opt/alima/dhis2"
-DOMAIN="${DOMAIN:-dhis2.alima.ngo}"
+DOMAIN="${DOMAIN:-dhis2-test.alima.ngo}"
 ACME_EMAIL="${ACME_EMAIL:-si@alima.ngo}"
 
 log() { printf '\n\033[1;34m▶ %s\033[0m\n' "$*"; }
