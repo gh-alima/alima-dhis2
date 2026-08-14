@@ -5,7 +5,7 @@
 # "latest" : un tag mobile rendrait le retour arrière et l'audit impossibles.
 #
 #   gcloud builds submit --config=cloudbuild-deploy.yaml \
-#     --substitutions=_IMAGE_TAG=2.41.9.1.20260814.556073b \
+#     --substitutions=_IMAGE_TAG=2.41.9.1.20260814.01.556073b \
 #     --project=alima-dhis2-prod
 #
 # ⚠ PRODUCTION UNIQUEMENT
@@ -57,7 +57,7 @@ steps:
           echo "    dhis2-deploy-prod → EXÉCUTER, puis renseigner _IMAGE_TAG." >&2
           echo "" >&2
           echo "  En ligne de commande :" >&2
-          echo "    --substitutions=_IMAGE_TAG=2.41.9.1.20260814.556073b" >&2
+          echo "    --substitutions=_IMAGE_TAG=2.41.9.1.20260814.01.556073b" >&2
           echo "" >&2
           echo "  Tags disponibles :" >&2
           echo "    gcloud artifacts docker images list \\" >&2

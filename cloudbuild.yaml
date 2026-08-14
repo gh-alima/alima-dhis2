@@ -37,7 +37,10 @@ steps:
   # La version DHIS2 est lue dans le Dockerfile : elle y est déclarée une seule
   # fois et n'est jamais ressaisie ailleurs.
   - id: metadata
-    name: gcr.io/cloud-builders/git
+    # cloud-sdk et non cloud-builders/git : cette étape interroge Artifact
+    # Registry pour numéroter la construction, et n'a plus besoin de git — le
+    # commit vient de SHORT_SHA ou de _VCS_REF.
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
     entrypoint: bash
     args:
       - -c
@@ -62,11 +65,35 @@ steps:
           exit 1
         fi
 
-        # Format unique : <version-dhis2>.<date>.<commit>
+        DATE=$(date -u +%Y%m%d)
+        IMAGE="${_AR_HOST}/${PROJECT_ID}/${_AR_REPO}/dhis2-core"
+
+        # Numéro d'ordre dans la journée.
+        #
+        # Le commit identifie l'origine du code, mais deux SHA ne s'ordonnent
+        # pas entre eux : devant deux images du même jour, rien ne dit laquelle
+        # est la plus récente. Le compteur répond à cette question.
+        #
+        # Il est calculé en comptant les tags déjà publiés pour la même version
+        # et la même date. Le registre est donc la seule source de vérité — pas
+        # de compteur à maintenir ailleurs, et une image supprimée ne fausse pas
+        # le classement des suivantes.
+        #
+        # Limite assumée : deux constructions simultanées liraient le même
+        # compte et produiraient le même numéro, la seconde écrasant le tag de
+        # la première. À l'échelle d'ALIMA — un déploiement à la fois — le cas
+        # ne se présente pas.
+        COUNT=$(gcloud artifacts docker images list "$${IMAGE}" \
+                  --include-tags --format='value(tags)' 2>/dev/null \
+                | tr ',' '\n' | tr -d ' ' \
+                | grep -c "^$${DHIS2_VERSION}\.$${DATE}\." || true)
+        SEQ=$(printf '%02d' $(( $${COUNT:-0} + 1 )))
+
+        # Format : <version-dhis2>.<date>.<numéro-du-jour>.<commit>
         # Pas de préfixe distinguant intégration et publication — il n'existe
         # qu'un seul environnement, donc une seule nature d'artefact. Un tag
         # « dev. » sur une image destinée à la production serait mensonger.
-        TAG="$${DHIS2_VERSION}.$(date -u +%Y%m%d).$${REF}"
+        TAG="$${DHIS2_VERSION}.$${DATE}.$${SEQ}.$${REF}"
 
         echo "$${TAG}"              > /workspace/tag.txt
         echo "$${DHIS2_VERSION}"    > /workspace/version.txt
@@ -75,6 +102,7 @@ steps:
 
         echo "Version DHIS2 : $${DHIS2_VERSION}"
         echo "Commit        : $${REF}"
+        echo "Construction  : n° $${SEQ} du $${DATE}"
         echo "Tag d'image   : $${TAG}"
 
   # ── 2. Construction de dhis2-core ──────────────────────────────────────────

@@ -403,7 +403,7 @@ gcloud builds submit --config=cloudbuild.yaml --project=alima-dhis2-prod
 ```
 
 La fin du journal affiche le tag produit, par exemple
-`2.41.9.1.20260814.556073b`. Le déploiement se fait ensuite avec ce tag :
+`2.41.9.1.20260814.01.556073b`. Le déploiement se fait ensuite avec ce tag :
 
 ```bash
 gcloud builds submit --config=cloudbuild-deploy.yaml \

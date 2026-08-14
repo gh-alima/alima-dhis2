@@ -216,7 +216,7 @@ cat <<EOF
   ---------------------------------
   push sur ${BRANCH}
      └─▶ ${TRIGGER_BUILD}  (automatique)
-            └─▶ images dans Artifact Registry, tag <version>.<date>.<commit>
+            └─▶ images dans Artifact Registry, tag <version>.<date>.<n°>.<commit>
 
   validation locale du tag
      └─▶ ${TRIGGER_DEPLOY}  (manuel + APPROBATION)

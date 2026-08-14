@@ -460,13 +460,37 @@ l'image.
 **Nommage des tags** — un format unique :
 
 ```text
-<version-dhis2>.<YYYYMMDD>.<commit-court>
+<version-dhis2>.<YYYYMMDD>.<n° du jour>.<commit-court>
 
-2.41.9.1.20260814.556073b
+2.41.9.1.20260814.01.556073b
 ```
 
-Les trois composantes répondent aux trois questions qu'on se pose devant une image en
-production : *quelle version de DHIS2 ?*, *construite quand ?*, *à partir de quel code ?*
+Les quatre composantes répondent aux quatre questions qu'on se pose devant une image en
+production :
+
+| Composante | Question |
+|---|---|
+| `2.41.9.1` | quelle version de DHIS2 ? |
+| `20260814` | construite quand ? |
+| `01` | la combientième ce jour-là — **laquelle est la plus récente ?** |
+| `556073b` | à partir de quel code ? |
+
+**Pourquoi un numéro alors que le commit identifie déjà l'image.** Le commit dit *d'où
+vient* le code, mais deux SHA ne s'ordonnent pas entre eux : devant `…20260814.a1b2c3d`
+et `…20260814.e4f5g6h`, rien n'indique laquelle est la plus récente. Le numéro tranche.
+Le cas est fréquent en journée de mise au point, où plusieurs constructions se succèdent
+sur la même version.
+
+Le compteur est calculé en interrogeant Artifact Registry : on compte les tags déjà
+publiés pour la même version et la même date. **Le registre est donc la seule source de
+vérité** — aucun compteur à maintenir ailleurs, et la suppression d'une image ancienne ne
+fausse pas le classement des suivantes.
+
+> Limite assumée : deux constructions simultanées liraient le même compte et produiraient
+> le même numéro, la seconde écrasant le tag de la première. À l'échelle d'ALIMA — une
+> personne, un déploiement à la fois — le cas ne se présente pas. Si la cadence augmentait,
+> la parade serait d'activer l'immuabilité des tags sur le dépôt Artifact Registry, qui
+> ferait échouer le second envoi au lieu de l'écraser silencieusement.
 
 **Pas de préfixe distinguant intégration et publication.** Un tel préfixe supposait deux
 natures d'artefacts, donc deux destinations. Il n'y en a qu'une : la production, après
