@@ -48,7 +48,12 @@ services:
       # pare-feu n'autorise que 80/443, seul Nginx atteint ce port.
       - "127.0.0.1:8080:8080"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/system/ping"]
+      # /dhis-web-login/ répond 200 sans authentification. Ne PAS utiliser
+      # /api/system/ping ni /api/system/info : en 2.41 ils exigent une session
+      # et renvoient une redirection 302 vers la page de connexion — que
+      # `curl -f` considère comme un succès, ce qui donnerait une sonde verte
+      # même sur une application à moitié déployée.
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/dhis-web-login/"]
       interval: 15s
       timeout: 5s
       retries: 5

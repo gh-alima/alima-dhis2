@@ -11,7 +11,7 @@
 
 # Version DHIS2 — déclarée ICI et nulle part ailleurs.
 # La chaîne CI la lit dans ce fichier pour composer le tag d'image.
-ARG DHIS2_VERSION=2.41.4
+ARG DHIS2_VERSION=2.41.9.1
 FROM dhis2/core:${DHIS2_VERSION}
 
 # --- Métadonnées OCI : permettent de remonter d'une image en production au
@@ -35,6 +35,12 @@ USER root
 # propriétés logging.* de dhis.conf (cf. docs/architecture-et-cicd.md §5.3).
 # Remplacer la configuration log4j2 de DHIS2 risquerait de casser l'écriture
 # des journaux sous DHIS2_HOME.
+#
+# ⚠ PALIERS DE MIGRATION : server.xml vise Tomcat 9/10 (Java 17, cible 2.41).
+#   Les images 2.35.14 et 2.36.x reposent sur Tomcat 8.5 / JDK 8-11 — commenter
+#   la ligne ci-dessous pour ces paliers. Ils ne servent qu'à faire migrer le
+#   schéma et n'ont pas besoin du réglage fin du connecteur.
+#   Cf. docs/architecture-et-cicd.md §9.0
 COPY docker/server.xml      /usr/local/tomcat/conf/server.xml
 COPY docker/setenv.sh       /usr/local/tomcat/bin/setenv.sh
 
