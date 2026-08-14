@@ -7,8 +7,8 @@ construction/déploiement et de la gestion de la configuration.
 |---|---|
 | **Projet** | Migration DHIS2 ALIMA 2.35 → 2.41 |
 | **Cible** | GCP `alima-dhis2-prod`, région `europe-west1` |
-| **Statut** | Proposition de conception — à valider avant implémentation |
-| **Version** | 1.0 |
+| **Statut** | Conception mise en œuvre — image validée localement, infrastructure provisionnée le 14 août 2026. Reste en attente : enregistrement DNS côté ALIMA, puis premier déploiement |
+| **Version** | 1.2 |
 
 ---
 
@@ -739,17 +739,30 @@ de référence publié par l'équipe DHIS2 :
 
 ## 14. Suites
 
-1. Validation de ce document avec le référent SI ALIMA.
-2. Relevé de la volumétrie du magasin de fichiers de l'instance 2.35 (§12, point 1).
-3. Rédaction de `docs/variables-environnement.md` — taxonomie exhaustive des variables
+### Fait
+
+1. **Squelette du dépôt** conforme au §10.
+2. **Image 2.41.9.1 construite et validée localement**, persistance comprise :
+   `server.xml` compatible Tomcat 9.0.111, `curl` présent dans l'image de base, magasin
+   de fichiers et journaux survivant au remplacement du conteneur, aucune migration
+   rejouée au redémarrage.
+3. **Infrastructure GCP provisionnée** le 14 août 2026 — voir l'état détaillé dans
+   [`provisionnement-gcp.md`](provisionnement-gcp.md).
+
+### En attente d'ALIMA
+
+4. **Enregistrement DNS** `dhis2.alima.ngo` → `34.38.89.219`. Adresse transmise à
+   l'équipe ALIMA. **Bloquant** : sans résolution, pas de certificat TLS, donc pas de
+   démarrage de Nginx ni de premier déploiement.
+5. **Volumétrie du magasin de fichiers** de l'instance 2.35 — conditionne le
+   dimensionnement du disque et la durée de la copie à la bascule (§12, point 1).
+
+### À suivre
+
+6. Préparation de la VM (`install-vm.sh`), déclencheurs Cloud Build, première
+   construction et premier déploiement.
+7. Rédaction de `docs/variables-environnement.md` — taxonomie exhaustive des variables
    `DHIS2_*`, avec valeur par défaut, propriété `dhis.conf` correspondante et caractère
    sensible ou non.
-4. Création du squelette du dépôt conformément au §10. — **fait**
-5. Construction de l'image 2.41.9.1 et validation locale de bout en bout, persistance
-   comprise. — **fait** : `server.xml` compatible Tomcat 9.0.111, `curl` présent dans
-   l'image, magasin de fichiers et journaux survivent au remplacement du conteneur,
-   aucune migration rejouée.
-6. Provisionnement de l'infrastructure GCP — voir
-   [`provisionnement-gcp.md`](provisionnement-gcp.md).
-7. Construction de l'image 2.35.14 (palier de départ) et validation locale du premier
+8. Construction de l'image 2.35.14 (palier de départ) et validation locale du premier
    saut de migration sur une copie de la base ALIMA.

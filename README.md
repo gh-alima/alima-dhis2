@@ -97,6 +97,11 @@ arrière consiste à relancer ce même déploiement avec le tag précédent.
 
 ## Provisionnement
 
+> **État au 14 août 2026 — infrastructure créée.** VM `vm-dhis2-app` en service, adresse
+> publique **`34.38.89.219`**, Cloud SQL PostgreSQL 16 en IP privée. En attente de
+> l'enregistrement DNS côté ALIMA, préalable au certificat TLS et au premier déploiement.
+> État détaillé : [`docs/provisionnement-gcp.md`](docs/provisionnement-gcp.md).
+
 📖 **Mode opératoire complet, pas à pas :
 [`docs/provisionnement-gcp.md`](docs/provisionnement-gcp.md)** — installation de gcloud,
 authentification, facturation, exécution, vérifications et écarts connus.

@@ -7,6 +7,45 @@ Conception sous-jacente : [`architecture-et-cicd.md`](architecture-et-cicd.md).
 
 ---
 
+## État du provisionnement
+
+**Infrastructure créée le 14 août 2026** sur le projet `alima-dhis2-prod`
+(région `europe-west1`, zone `europe-west1-b`), par `scripts/01-setup-gcp.sh`.
+
+| Ressource | Identifiant | État |
+|---|---|---|
+| VPC / sous-réseau | `vpc-dhis2` / `subnet-dhis2` (10.10.0.0/24) | ✅ |
+| Peering Private Service Access | `google-managed-services-vpc-dhis2` | ✅ |
+| Pare-feu | `allow-ssh-iap`, `allow-http-https` | ✅ |
+| Cloud SQL | `pg16-dhis2-prod` — PostgreSQL 16, **édition ENTERPRISE**, `db-custom-2-8192`, zonal, PITR, protection contre la suppression | ✅ |
+| IP privée de la base | `10.235.0.3` (aussi dans le secret `dhis2-db-host`) | ✅ |
+| Secrets | `dhis2-db-password`, `dhis2-db-user`, `dhis2-encryption-password`, `dhis2-db-host`, `dhis2-fqdn` | ✅ |
+| Artifact Registry | `dhis2-images` + politique de nettoyage (10 versions, purge > 30 j) | ✅ vide |
+| Comptes de service | `sa-dhis2-vm`, `sa-dhis2-build` | ✅ |
+| Sauvegardes | `gs://alima-dhis2-prod-dhis2-backups`, rétention 30 jours | ✅ |
+| VM applicative | `vm-dhis2-app` — e2-standard-2, interne `10.10.0.2` | ✅ RUNNING |
+| **Adresse publique statique** | `ip-dhis2-app` — **`34.38.89.219`** | ✅ |
+| Snapshots quotidiens | `snap-dhis2-daily`, rétention 14 jours | ✅ |
+
+### Ce qui reste à faire
+
+| # | Action | Responsable | Bloque |
+|---|---|---|---|
+| 1 | **Enregistrement DNS** : `dhis2.alima.ngo` → `34.38.89.219` | **équipe ALIMA** — adresse transmise, en attente | tout le reste |
+| 2 | Copie des scripts et exécution d'`install-vm.sh` sur la VM | consultant | déploiement |
+| 3 | Création des déclencheurs Cloud Build (§9) | consultant | déploiement |
+| 4 | Première construction et premier déploiement (§10) | consultant | — |
+
+> **Le point 1 est bloquant.** `certbot` ne peut pas émettre le certificat tant que le
+> domaine ne résout pas vers cette adresse, et Nginx refuse de démarrer sans certificat.
+> Vérifier avant de poursuivre : `dig +short dhis2.alima.ngo`
+
+> **Note sur ces valeurs.** Elles sont consignées ici comme référence d'exploitation. Les
+> pipelines et les scripts, eux, restent paramétrés — aucun identifiant d'infrastructure
+> n'y est écrit en dur (décision D11).
+
+---
+
 ## 0. Avant de commencer
 
 ### Ce qu'il faut avoir
@@ -224,7 +263,18 @@ Points de contrôle :
 
 ## 8. Préparer la VM
 
-Se connecter — SSH passe obligatoirement par IAP, le port 22 n'étant ouvert que
+> ⛔ **Ne pas commencer avant que le DNS résolve.** `install-vm.sh` demande le certificat
+> à Let's Encrypt ; sans résolution, l'émission échoue. Vérifier d'abord :
+> `dig +short dhis2.alima.ngo` doit renvoyer `34.38.89.219`.
+
+**1. Copier les scripts sur la VM** — ils n'y sont pas, le dépôt n'y est pas cloné :
+
+```bash
+gcloud compute scp --recurse scripts/ vm-dhis2-app:~ \
+  --zone=europe-west1-b --tunnel-through-iap --project=alima-dhis2-prod
+```
+
+**2. Se connecter** — SSH passe obligatoirement par IAP, le port 22 n'étant ouvert que
 depuis la plage `35.235.240.0/20` :
 
 ```bash
@@ -232,15 +282,26 @@ gcloud compute ssh vm-dhis2-app \
   --zone=europe-west1-b --tunnel-through-iap --project=alima-dhis2-prod
 ```
 
-Puis, **sur la VM** :
+**3. Exécuter l'installation**, sur la VM :
 
 ```bash
-# Récupérer le script depuis le dépôt (ou le copier via gcloud compute scp)
-sudo DOMAIN=dhis2.alima.ngo ACME_EMAIL=si@alima.ngo ./install-vm.sh
+chmod +x ~/scripts/*.sh
+sudo DOMAIN=dhis2.alima.ngo ACME_EMAIL=<email-technique-alima> ~/scripts/install-vm.sh
 ```
 
-`install-vm.sh` installe Docker, crée les trois volumes de persistance, obtient le
-certificat TLS et configure l'agent Ops.
+`install-vm.sh` met à jour le système, installe Docker et `gcloud`, vérifie que le compte
+de service peut lire les secrets, crée les trois volumes de persistance, obtient le
+certificat TLS et met en place son renouvellement automatique, puis configure l'agent Ops
+pour collecter les journaux applicatifs.
+
+**4. Vérifier** après exécution :
+
+```bash
+docker volume ls                    # dhis2-home, dhis2-files, dhis2-logs
+ls -l /etc/letsencrypt/live/dhis2/  # fullchain.pem et privkey.pem
+systemctl status certbot-renew.timer
+df -h /                             # le disque doit exposer ~100 Go
+```
 
 > ⚠ **Le certificat TLS exige que le DNS pointe déjà vers l'IP de la VM** et que le port
 > 80 soit joignable depuis Internet. Si ce n'est pas encore le cas, le script le signale
