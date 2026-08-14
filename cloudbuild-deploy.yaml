@@ -209,15 +209,15 @@ steps:
                        --registry ${_AR_HOST}/${PROJECT_ID}/${_AR_REPO} \
                        --output ${_REMOTE_DIR}/.env"
 
-  # ── 4. Déploiement ─────────────────────────────────────────────────────────
-  # Comme la vérification, le déploiement est porté par un script présent sur la
-  # VM, appelé par une commande d'une seule ligne.
+  # ── 4. Préparation de la base ──────────────────────────────────────────────
+  # DHIS2 exige postgis, btree_gin et pg_trgm. Sans elles, le démarrage échoue
+  # sur une exception Hibernate qui ne désigne pas la cause.
   #
-  # Le « cd » ne peut pas se faire côté SSH : le répertoire applicatif est en
-  # 750 propriété de root — il contient le .env, donc le mot de passe de la base
-  # et la clé de chiffrement. C'est le déploiement qui doit passer en root, pas
-  # les permissions qui doivent être relâchées.
-  - id: deploy
+  # Cette étape est rejouée à chaque déploiement, et non réservée à la première
+  # installation : une base restaurée depuis une sauvegarde, ou recréée,
+  # retrouve ainsi ses extensions sans que personne ait à y penser. Les
+  # « CREATE EXTENSION IF NOT EXISTS » ne coûtent rien quand elles sont déjà là.
+  - id: init-db
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
     waitFor: [render-env]
     entrypoint: bash
@@ -228,9 +228,30 @@ steps:
         VM=$(cat /workspace/vm.txt)
 
         gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
+          --command "sudo bash ${_REMOTE_DIR}/scripts/init-database.sh ${_REMOTE_DIR}"
+
+  # ── 5. Déploiement ─────────────────────────────────────────────────────────
+  # Comme la vérification, le déploiement est porté par un script présent sur la
+  # VM, appelé par une commande d'une seule ligne.
+  #
+  # Le « cd » ne peut pas se faire côté SSH : le répertoire applicatif est en
+  # 750 propriété de root — il contient le .env, donc le mot de passe de la base
+  # et la clé de chiffrement. C'est le déploiement qui doit passer en root, pas
+  # les permissions qui doivent être relâchées.
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
+    waitFor: [init-db]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        VM=$(cat /workspace/vm.txt)
+
+        gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
           --command "sudo bash ${_REMOTE_DIR}/scripts/deploy-stack.sh ${_REMOTE_DIR} ${_AR_HOST}"
 
-  # ── 5. Vérification active ─────────────────────────────────────────────────
+  # ── 6. Vérification active ─────────────────────────────────────────────────
   # Un déploiement n'est annoncé réussi qu'après réponse de l'application.
   # Sans cette étape, un conteneur qui redémarre en boucle passerait pour un
   # succès.

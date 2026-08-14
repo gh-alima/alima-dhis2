@@ -506,7 +506,7 @@ retour arrière et l'audit deviendraient impossibles.
 
 ### 7.3 Déploiement
 
-```
+```text
 [LOCAL]  docker compose --profile local up
          validation du tag : démarrage, migrations, parcours fonctionnels
    │
@@ -517,10 +517,24 @@ Déclenchement manuel avec _IMAGE_TAG
 [APPROBATION MANUELLE]  ← référent ALIMA ou consultant selon la phase
    │
    ▼
-[PRODUCTION]  mise à jour du tag dans .env sur la VM
-              docker compose pull && docker compose up -d
-              attente du démarrage, sonde /dhis-web-login/
+[PRODUCTION]  1. validate    tag fourni, images présentes dans le registre
+              2. upload      docker-compose.yml et scripts vers la VM
+              3. render-env  .env généré depuis Secret Manager, par la VM
+              4. init-db     extensions PostgreSQL (postgis, btree_gin, pg_trgm)
+              5. deploy      docker compose pull && up -d
+              6. verify      attente de l'état healthy, sonde /dhis-web-login/
 ```
+
+**Toutes les commandes distantes sont des scripts présents sur la VM**, appelés par une
+commande d'une seule ligne. Le shell écrit directement dans le YAML traverse trois
+niveaux d'interprétation — substitutions Cloud Build, shell local, shell distant — où
+chaque `$`, chaque apostrophe et chaque guillemet devient un piège, et où un
+`set -euo pipefail` peut rester sans effet, masquant les échecs intermédiaires.
+
+L'étape `init-db` est rejouée à chaque déploiement et non réservée à la première
+installation : une base restaurée depuis une sauvegarde retrouve ainsi ses extensions
+sans que personne ait à y penser. Sans elles, DHIS2 échoue au démarrage sur une
+exception Hibernate qui n'en désigne pas la cause.
 
 L'approbation manuelle est portée par le **trigger Cloud Build** de production, pas par
 le contenu du dépôt : personne ne peut la contourner par un commit.
