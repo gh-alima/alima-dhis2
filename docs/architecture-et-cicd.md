@@ -722,18 +722,28 @@ Deux validations conditionnent le Go-Live et sont propres à ALIMA :
 ├── scripts/
 │   ├── 01-setup-gcp.sh           provisionnement — source de vérité
 │   ├── 02-setup-triggers.sh      déclencheurs Cloud Build (build + deploy)
-│   ├── install-vm.sh             Docker, volumes, TLS, agent Ops sur la VM
-│   ├── render-env.sh             génère .env depuis Secret Manager (sur la VM)
-│   ├── backup-filestore.sh       archive le volume dhis2-files vers Cloud Storage
+│   ├── install-vm.sh             Docker, gcloud, TLS, agent Ops sur la VM
+│   ├── dhis2ctl.sh               exploitation courante sur la VM
+│   ├── render-env.sh             ┐
+│   ├── init-database.sh          │ appelés par le pipeline de déploiement,
+│   ├── deploy-stack.sh           │ exécutés sur la VM
+│   ├── wait-healthy.sh           ┘
+│   ├── backup-filestore.sh       archive le magasin de fichiers vers Cloud Storage
 │   ├── restore-filestore.sh      restaure le magasin de fichiers depuis une archive
 │   └── 99-cleanup-gcp.sh         suppression de l'infrastructure
 └── docs/
     ├── architecture-et-cicd.md   ce document
+    ├── aide-memoire.md           commandes du quotidien
     ├── provisionnement-gcp.md    mode opératoire pas à pas de l'infrastructure
-    ├── variables-environnement.md  taxonomie complète des variables DHIS2_*
-    ├── plan-migration.md         déroulé des paliers et procédures de bascule
-    └── exploitation.md           supervision, sauvegardes, incidents courants
+    ├── variables-environnement.md  taxonomie complète des variables DHIS2_* — à rédiger
+    └── plan-migration.md         déroulé des paliers et bascule — à rédiger
 ```
+
+**Toutes les commandes distantes du pipeline sont des scripts déposés sur la VM**, jamais
+du shell écrit dans le YAML : celui-ci traverserait trois niveaux d'interprétation —
+substitution Cloud Build, shell local, shell distant — où chaque `$` et chaque apostrophe
+devient un piège, et où un `set -euo pipefail` peut rester sans effet en masquant les
+échecs intermédiaires.
 
 **Pas de `log4j2.xml`.** La journalisation se pilote par les propriétés
 `logging.*` de `dhis.conf`, comme le documente DHIS2. Remplacer la configuration

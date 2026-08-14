@@ -26,8 +26,22 @@ co-localisé à Cloud SQL PostgreSQL 16 managé.
 │   ├── wait-for-it.sh         attente de disponibilité de la base
 │   └── nginx/                 image dhis2-nginx (TLS, gzip, en-têtes de sécurité)
 ├── configuration/             métadonnées DHIS2 à charger dans l'image
-├── scripts/                   provisionnement GCP, installation VM, sauvegardes
-└── docs/                      documentation d'architecture et d'exploitation
+├── scripts/
+│   ├── 01-setup-gcp.sh        provisionnement GCP — source de vérité
+│   ├── 02-setup-triggers.sh   déclencheurs Cloud Build
+│   ├── install-vm.sh          préparation de la VM (une seule fois)
+│   ├── dhis2ctl.sh            exploitation courante sur la VM
+│   ├── render-env.sh          ┐
+│   ├── init-database.sh       │ appelés par le pipeline
+│   ├── deploy-stack.sh        │ de déploiement
+│   ├── wait-healthy.sh        ┘
+│   ├── backup-filestore.sh    sauvegarde du magasin de fichiers
+│   ├── restore-filestore.sh   restauration
+│   └── 99-cleanup-gcp.sh      suppression de l'infrastructure
+└── docs/
+    ├── aide-memoire.md        commandes du quotidien — à garder sous la main
+    ├── architecture-et-cicd.md   conception et décisions
+    └── provisionnement-gcp.md    création de l'infrastructure, pas à pas
 ```
 
 ---
@@ -38,6 +52,10 @@ co-localisé à Cloud SQL PostgreSQL 16 managé.
 environnement : toute la configuration est injectée au démarrage par variables
 `DHIS2_*`, et `init.sh` en produit `dhis.conf`. Une image est construite une fois puis
 promue de test vers production **par son tag, sans reconstruction**.
+
+**Exploitation au quotidien : [`docs/aide-memoire.md`](docs/aide-memoire.md)** — se
+connecter, consulter les journaux, redémarrer, diagnostiquer, déployer, et les gestes à ne
+jamais faire.
 
 Conception détaillée : [`docs/architecture-et-cicd.md`](docs/architecture-et-cicd.md).
 
