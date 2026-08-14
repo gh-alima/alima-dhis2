@@ -1,0 +1,89 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  =============================================================================
+  server.xml — configuration Tomcat pour DHIS2 ALIMA
+
+  Trois écarts par rapport à la configuration Tomcat par défaut :
+
+  1. relaxedQueryChars — l'API DHIS2 utilise [ ] { } | dans les paramètres de
+     requête (dimensions analytiques notamment). Tomcat les rejette par défaut
+     avec une 400, ce qui casse une partie des requêtes analytiques.
+
+  2. RemoteIpValve — DHIS2 est derrière Nginx. Sans cette valve, l'application
+     voit l'IP de Nginx au lieu de celle du client (journaux d'audit faussés)
+     et croit le trafic en HTTP, ce qui produit des redirections en clair.
+
+  3. compression désactivée — la compression gzip est faite par Nginx. La faire
+     deux fois consomme du CPU pour rien.
+
+  ⚠ Ce fichier remplace celui de l'image de base. Il doit être revalidé à
+     chaque changement de version majeure de Tomcat (cf. montée de palier).
+  =============================================================================
+-->
+<Server port="-1" shutdown="SHUTDOWN">
+
+  <Listener className="org.apache.catalina.startup.VersionLoggerListener" />
+  <Listener className="org.apache.catalina.core.AprLifecycleListener" SSLEngine="on" />
+  <Listener className="org.apache.catalina.core.JreMemoryLeakPreventionListener" />
+  <Listener className="org.apache.catalina.mbeans.GlobalResourcesLifecycleListener" />
+  <Listener className="org.apache.catalina.core.ThreadLocalLeakPreventionListener" />
+
+  <GlobalNamingResources>
+    <Resource name="UserDatabase" auth="Container"
+              type="org.apache.catalina.UserDatabase"
+              description="User database that can be updated and saved"
+              factory="org.apache.catalina.users.MemoryUserDatabaseFactory"
+              pathname="conf/tomcat-users.xml" />
+  </GlobalNamingResources>
+
+  <Service name="Catalina">
+
+    <Connector port="8080"
+               protocol="org.apache.coyote.http11.Http11NioProtocol"
+               connectionTimeout="20000"
+               maxThreads="200"
+               minSpareThreads="20"
+               acceptCount="100"
+               maxHttpHeaderSize="65536"
+               maxPostSize="52428800"
+               URIEncoding="UTF-8"
+               compression="off"
+               enableLookups="false"
+               server="ALIMA"
+               relaxedQueryChars="[]|{}^&#x5c;&#x60;&quot;&lt;&gt;"
+               relaxedPathChars="[]|" />
+
+    <Engine name="Catalina" defaultHost="localhost">
+
+      <Realm className="org.apache.catalina.realm.LockOutRealm">
+        <Realm className="org.apache.catalina.realm.UserDatabaseRealm"
+               resourceName="UserDatabase" />
+      </Realm>
+
+      <Host name="localhost" appBase="webapps"
+            unpackWARs="true" autoDeploy="false" deployOnStartup="true">
+
+        <!-- Restitue l'IP réelle du client et le protocole d'origine (HTTPS)
+             à partir des en-têtes transmis par Nginx. -->
+        <Valve className="org.apache.catalina.valves.RemoteIpValve"
+               remoteIpHeader="x-forwarded-for"
+               protocolHeader="x-forwarded-proto"
+               protocolHeaderHttpsValue="https"
+               internalProxies="10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+|127\.\d+\.\d+\.\d+" />
+
+        <!-- Journal d'accès sur la sortie standard : repris par le pilote de
+             journalisation Docker. Les journaux applicatifs DHIS2, eux, sont
+             écrits sous DHIS2_HOME/logs (volume dhis2-logs). -->
+        <Valve className="org.apache.catalina.valves.AccessLogValve"
+               directory="/dev"
+               prefix="stdout"
+               fileDateFormat=""
+               suffix=""
+               rotatable="false"
+               buffered="false"
+               pattern="%h %l %u %t &quot;%r&quot; %s %b %D" />
+
+      </Host>
+    </Engine>
+  </Service>
+</Server>

@@ -1,0 +1,195 @@
+# =============================================================================
+# cloudbuild-deploy.yaml — déploiement d'un tag d'image sur une VM
+#
+# Déclenchement MANUEL uniquement. On déploie un tag DÉJÀ CONSTRUIT — jamais
+# "latest" : un tag mobile rendrait le retour arrière et l'audit impossibles.
+#
+#   gcloud builds submit --config=cloudbuild-deploy.yaml \
+#     --substitutions=_IMAGE_TAG=dev.2.41.4.20260315.a1b2c3d,_ENV=test \
+#     --project=alima-dhis2-prod
+#
+# ⚠ APPROBATION MANUELLE
+#   Le déclencheur de PRODUCTION doit avoir l'approbation manuelle activée
+#   (Cloud Build → Déclencheurs → Approbation requise). Ce contrôle est porté
+#   par le déclencheur et non par ce fichier : personne ne peut le contourner
+#   par un commit.
+#
+# RETOUR ARRIÈRE
+#   Relancer ce même déploiement avec le tag précédent. Aucune reconstruction,
+#   aucune intervention manuelle sur la VM.
+# =============================================================================
+
+substitutions:
+  _IMAGE_TAG: ""          # OBLIGATOIRE — tag à déployer
+  _ENV: test              # test | prod
+  _AR_HOST: europe-west1-docker.pkg.dev
+  _AR_REPO: dhis2-images
+  _ZONE: europe-west1-b
+  _VM_TEST: vm-dhis2-test
+  _VM_PROD: vm-dhis2-app
+  _REMOTE_DIR: /opt/alima/dhis2
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  dynamicSubstitutions: true
+
+steps:
+
+  # ── 1. Validation des paramètres ───────────────────────────────────────────
+  # Échouer ici, en quelques secondes, plutôt qu'à mi-parcours d'un
+  # déploiement à moitié appliqué.
+  - id: validate
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+
+        if [ -z "${_IMAGE_TAG}" ]; then
+          echo "ERREUR : _IMAGE_TAG est obligatoire." >&2
+          echo "  Exemple : --substitutions=_IMAGE_TAG=dev.2.41.4.20260315.a1b2c3d,_ENV=test" >&2
+          exit 1
+        fi
+
+        if [ "${_IMAGE_TAG}" = "latest" ]; then
+          echo "ERREUR : le déploiement de 'latest' est interdit." >&2
+          echo "  Un tag mobile rend le retour arrière et l'audit impossibles." >&2
+          exit 1
+        fi
+
+        case "${_ENV}" in
+          test) VM="${_VM_TEST}" ;;
+          prod) VM="${_VM_PROD}" ;;
+          *) echo "ERREUR : _ENV doit valoir 'test' ou 'prod' (reçu : ${_ENV})" >&2; exit 1 ;;
+        esac
+        echo "$${VM}" > /workspace/vm.txt
+
+        # Les deux images doivent exister dans le registre avant qu'on touche
+        # à la VM.
+        BASE="${_AR_HOST}/${PROJECT_ID}/${_AR_REPO}"
+        for IMG in dhis2-core dhis2-nginx; do
+          echo "Vérification de $${IMG}:${_IMAGE_TAG}..."
+          gcloud artifacts docker images describe \
+            "$${BASE}/$${IMG}:${_IMAGE_TAG}" >/dev/null 2>&1 || {
+              echo "ERREUR : image introuvable dans Artifact Registry :" >&2
+              echo "         $${BASE}/$${IMG}:${_IMAGE_TAG}" >&2
+              exit 1
+            }
+        done
+
+        echo "Environnement : ${_ENV}  →  VM $${VM}"
+        echo "Tag à déployer : ${_IMAGE_TAG}"
+
+  # ── 2. Transfert de la configuration sur la VM ─────────────────────────────
+  # docker-compose.yml et les scripts d'exploitation sont versionnés : ils
+  # sont poussés depuis le dépôt à chaque déploiement, jamais édités sur la VM.
+  - id: upload
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
+    waitFor: [validate]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        VM=$(cat /workspace/vm.txt)
+
+        tar czf /workspace/stack.tar.gz \
+          -C . docker/docker-compose.yml scripts
+
+        gcloud compute scp /workspace/stack.tar.gz \
+          "$${VM}:/tmp/stack.tar.gz" \
+          --zone=${_ZONE} --tunnel-through-iap --quiet
+
+        gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
+          --command "set -euo pipefail
+            sudo mkdir -p ${_REMOTE_DIR}
+            sudo tar xzf /tmp/stack.tar.gz -C ${_REMOTE_DIR} --strip-components=0
+            sudo mv -f ${_REMOTE_DIR}/docker/docker-compose.yml ${_REMOTE_DIR}/docker-compose.yml
+            sudo rmdir ${_REMOTE_DIR}/docker 2>/dev/null || true
+            sudo chmod +x ${_REMOTE_DIR}/scripts/*.sh
+            rm -f /tmp/stack.tar.gz"
+
+  # ── 3. Génération du .env depuis Secret Manager ────────────────────────────
+  # Les secrets ne transitent jamais par ce pipeline : c'est la VM qui les lit
+  # elle-même, avec son propre compte de service.
+  - id: render-env
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
+    waitFor: [upload]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        VM=$(cat /workspace/vm.txt)
+
+        gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
+          --command "sudo ${_REMOTE_DIR}/scripts/render-env.sh \
+                       --env ${_ENV} \
+                       --tag ${_IMAGE_TAG} \
+                       --registry ${_AR_HOST}/${PROJECT_ID}/${_AR_REPO} \
+                       --output ${_REMOTE_DIR}/.env"
+
+  # ── 4. Déploiement ─────────────────────────────────────────────────────────
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
+    waitFor: [render-env]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        VM=$(cat /workspace/vm.txt)
+
+        gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
+          --command "set -euo pipefail
+            cd ${_REMOTE_DIR}
+            sudo docker compose pull
+            sudo docker compose up -d --remove-orphans
+            sudo docker image prune -f --filter 'until=720h'"
+
+  # ── 5. Vérification active ─────────────────────────────────────────────────
+  # Un déploiement n'est annoncé réussi qu'après réponse de l'application.
+  # Sans cette étape, un conteneur qui redémarre en boucle passerait pour un
+  # succès.
+  - id: verify
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
+    waitFor: [deploy]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        VM=$(cat /workspace/vm.txt)
+
+        gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
+          --command "set -uo pipefail
+            echo 'Attente du démarrage de DHIS2 (jusqu\'à 10 minutes)...'
+            for i in \$(seq 1 60); do
+              STATE=\$(sudo docker inspect -f '{{.State.Health.Status}}' dhis2 2>/dev/null || echo unknown)
+              if [ \"\$STATE\" = healthy ]; then
+                echo \"DHIS2 opérationnel après \$((i*10))s.\"
+                sudo docker exec dhis2 curl -sf http://127.0.0.1:8080/api/system/info \
+                  | head -c 400 || true
+                echo ''
+                exit 0
+              fi
+              if [ \"\$STATE\" = unhealthy ]; then
+                echo 'ERREUR : conteneur signalé en échec.' >&2
+                sudo docker compose -f ${_REMOTE_DIR}/docker-compose.yml logs --tail=100 dhis2 >&2
+                exit 1
+              fi
+              sleep 10
+            done
+            echo 'ERREUR : DHIS2 n a pas démarré dans le délai imparti.' >&2
+            sudo docker compose -f ${_REMOTE_DIR}/docker-compose.yml logs --tail=100 dhis2 >&2
+            exit 1"
+
+        echo ""
+        echo "================================================================"
+        echo " Déploiement terminé — environnement ${_ENV}, tag ${_IMAGE_TAG}"
+        echo ""
+        echo " Retour arrière : relancer ce déploiement avec le tag précédent."
+        echo "================================================================"
+
+timeout: 3600s

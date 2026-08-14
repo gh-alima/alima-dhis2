@@ -1,0 +1,152 @@
+# =============================================================================
+# docker-compose.yml — pile applicative DHIS2 ALIMA
+#
+# Utilisé pour le développement local ET sur les VM (test / production).
+# Le seul écart entre les environnements est le contenu de .env.
+#
+# Le service "db" n'est démarré qu'en développement local, via le profil
+# "local" : sur les VM, la base est Cloud SQL.
+#
+#   Local        : docker compose --profile local up --build
+#   VM           : docker compose pull && docker compose up -d
+#   Sauvegarde   : docker compose --profile backup run --rm backup-filestore
+# =============================================================================
+
+services:
+
+  # ── Application ────────────────────────────────────────────────────────────
+  dhis2:
+    image: ${REGISTRY:-dhis2-alima}/dhis2-core:${IMAGE_TAG:-local}
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: dhis2
+    env_file: [.env]
+    volumes:
+      # DHIS2_HOME — contient dhis.conf, régénéré à chaque démarrage
+      - dhis2-home:/opt/dhis2
+      # Magasin de fichiers — IRREMPLAÇABLE, sauvegardé séparément
+      - dhis2-files:/opt/dhis2/files
+      # Journaux applicatifs — rotatifs, non sauvegardés
+      - dhis2-logs:/opt/dhis2/logs
+      # Répertoires temporaires en mémoire : la racine du conteneur est en
+      # lecture seule, seuls les volumes et ces tmpfs sont inscriptibles.
+      - type: tmpfs
+        target: /tmp
+        tmpfs: { size: 100m }
+      - type: tmpfs
+        target: /usr/local/tomcat/temp
+        tmpfs: { size: 1g }
+      - type: tmpfs
+        target: /usr/local/tomcat/logs
+        tmpfs: { size: 50m }
+      - type: tmpfs
+        target: /usr/local/tomcat/work/Catalina/localhost/ROOT
+        tmpfs: { size: 100m }
+    ports:
+      # Exposé pour le développement local et le diagnostic ; en production le
+      # pare-feu n'autorise que 80/443, seul Nginx atteint ce port.
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/system/ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      # DHIS2 démarre lentement — et bien plus lentement encore lorsqu'il
+      # applique les migrations Flyway d'un palier de version.
+      start_period: 300s
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+    networks: [dhis2-net]
+
+  # ── Reverse proxy ──────────────────────────────────────────────────────────
+  nginx:
+    image: ${REGISTRY:-dhis2-alima}/dhis2-nginx:${IMAGE_TAG:-local}
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: dhis2-nginx
+    depends_on:
+      dhis2:
+        condition: service_healthy
+    ports:
+      # Nginx écoute sur 8080/8443 dans le conteneur : il tourne en non-root
+      # et sans capacités, il ne peut donc pas se lier aux ports privilégiés.
+      # C'est Docker qui publie 80/443 côté hôte.
+      - "80:8080"
+      - "443:8443"
+    volumes:
+      - ${TLS_CERT_DIR:-/etc/letsencrypt}:/etc/letsencrypt:ro
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: [/tmp, /var/cache/nginx, /var/run]
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "3" }
+    networks: [dhis2-net]
+
+  # ── Base de données — DÉVELOPPEMENT LOCAL UNIQUEMENT ───────────────────────
+  # Sur les VM, la base est Cloud SQL : ce service n'est jamais démarré.
+  db:
+    image: postgis/postgis:16-3.4-alpine
+    container_name: dhis2-db
+    profiles: [local]
+    environment:
+      POSTGRES_DB: ${DHIS2_DATABASE_NAME:-dhis2}
+      POSTGRES_USER: ${DHIS2_DATABASE_USER:-dhis}
+      POSTGRES_PASSWORD: ${DHIS2_DATABASE_PASSWORD:-dhis}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DHIS2_DATABASE_USER:-dhis} -d ${DHIS2_DATABASE_NAME:-dhis2}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [dhis2-net]
+
+  # ── Sauvegarde du magasin de fichiers ──────────────────────────────────────
+  # Le dump PostgreSQL ne contient PAS les fichiers : une base restaurée sans
+  # eux référence des documents introuvables. Les deux se sauvegardent et se
+  # testent ensemble.
+  backup-filestore:
+    image: google/cloud-sdk:alpine
+    profiles: [backup]
+    volumes:
+      - dhis2-files:/data:ro
+      - ../scripts/backup-filestore.sh:/backup-filestore.sh:ro
+    environment:
+      BACKUP_BUCKET: ${BACKUP_BUCKET:-gs://alima-dhis2-backups}
+      BACKUP_PREFIX: ${BACKUP_PREFIX:-filestore}
+    entrypoint: ["/bin/sh", "/backup-filestore.sh"]
+    networks: [dhis2-net]
+
+  # ── Restauration du magasin de fichiers ────────────────────────────────────
+  restore-filestore:
+    image: google/cloud-sdk:alpine
+    profiles: [restore]
+    volumes:
+      - dhis2-files:/data
+      - ../scripts/restore-filestore.sh:/restore-filestore.sh:ro
+    environment:
+      BACKUP_BUCKET: ${BACKUP_BUCKET:-gs://alima-dhis2-backups}
+      RESTORE_ARCHIVE: ${RESTORE_ARCHIVE:-}
+    entrypoint: ["/bin/sh", "/restore-filestore.sh"]
+    networks: [dhis2-net]
+
+volumes:
+  dhis2-home: {}
+  dhis2-files: {}
+  dhis2-logs: {}
+  db-data: {}
+
+networks:
+  dhis2-net:
+    driver: bridge

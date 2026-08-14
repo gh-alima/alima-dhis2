@@ -1,0 +1,129 @@
+# =============================================================================
+# cloudbuild.yaml — construction des images DHIS2 ALIMA
+#
+# Déclenché à chaque push sur main (le déclencheur exclut **/*.md).
+# Construit dhis2-core et dhis2-nginx, puis les pousse dans Artifact Registry.
+#
+# CE PIPELINE NE DÉPLOIE RIEN. Le déploiement est une opération distincte,
+# portée par cloudbuild-deploy.yaml : on doit pouvoir rejouer n'importe quel
+# tag déjà construit — notamment le précédent, pour un retour arrière — sans
+# dépendre d'une reconstruction ni de l'état actuel de main.
+#
+# Lancement manuel :
+#   gcloud builds submit --config=cloudbuild.yaml --project=alima-dhis2-prod
+# =============================================================================
+
+substitutions:
+  _AR_HOST: europe-west1-docker.pkg.dev
+  _AR_REPO: dhis2-images
+  # "dev." pour les constructions d'intégration ; vide pour une publication.
+  _TAG_PREFIX: "dev."
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+  dynamicSubstitutions: true
+
+steps:
+
+  # ── 1. Composition du tag ──────────────────────────────────────────────────
+  # La version DHIS2 est lue dans le Dockerfile : elle y est déclarée une seule
+  # fois et n'est jamais ressaisie ailleurs.
+  - id: metadata
+    name: gcr.io/cloud-builders/git
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+
+        DHIS2_VERSION=$(sed -n 's/^ARG DHIS2_VERSION=//p' docker/Dockerfile | head -1)
+        if [ -z "$${DHIS2_VERSION}" ]; then
+          echo "ERREUR : ARG DHIS2_VERSION introuvable dans docker/Dockerfile" >&2
+          exit 1
+        fi
+
+        # SHORT_SHA est vide lors d'un « gcloud builds submit » manuel.
+        REF="${SHORT_SHA}"
+        [ -n "$${REF}" ] || REF=$(git rev-parse --short HEAD 2>/dev/null || echo manual)
+
+        TAG="${_TAG_PREFIX}$${DHIS2_VERSION}.$(date -u +%Y%m%d).$${REF}"
+
+        echo "$${TAG}"            > /workspace/tag.txt
+        echo "$${DHIS2_VERSION}"  > /workspace/version.txt
+        git rev-parse HEAD        > /workspace/vcs_ref.txt 2>/dev/null || echo unknown > /workspace/vcs_ref.txt
+        date -u +%Y-%m-%dT%H:%M:%SZ > /workspace/build_date.txt
+
+        echo "Version DHIS2 : $${DHIS2_VERSION}"
+        echo "Tag d'image   : $${TAG}"
+
+  # ── 2. Construction de dhis2-core ──────────────────────────────────────────
+  - id: build-core
+    name: gcr.io/cloud-builders/docker
+    waitFor: [metadata]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        TAG=$(cat /workspace/tag.txt)
+        IMAGE="${_AR_HOST}/${PROJECT_ID}/${_AR_REPO}/dhis2-core"
+
+        docker build \
+          --pull \
+          --build-arg VCS_REF="$(cat /workspace/vcs_ref.txt)" \
+          --build-arg VCS_URL="https://github.com/gh-alima/alima-dhis2" \
+          --build-arg BUILD_DATE="$(cat /workspace/build_date.txt)" \
+          --build-arg VERSION="$${TAG}" \
+          -t "$${IMAGE}:$${TAG}" \
+          -f docker/Dockerfile \
+          .
+
+  # ── 3. Construction de dhis2-nginx ─────────────────────────────────────────
+  - id: build-nginx
+    name: gcr.io/cloud-builders/docker
+    waitFor: [metadata]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        TAG=$(cat /workspace/tag.txt)
+        IMAGE="${_AR_HOST}/${PROJECT_ID}/${_AR_REPO}/dhis2-nginx"
+
+        docker build \
+          --pull \
+          --build-arg VCS_REF="$(cat /workspace/vcs_ref.txt)" \
+          --build-arg BUILD_DATE="$(cat /workspace/build_date.txt)" \
+          --build-arg VERSION="$${TAG}" \
+          -t "$${IMAGE}:$${TAG}" \
+          -f docker/nginx/Dockerfile \
+          docker/nginx
+
+  # ── 4. Publication dans Artifact Registry ──────────────────────────────────
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    waitFor: [build-core, build-nginx]
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        TAG=$(cat /workspace/tag.txt)
+        BASE="${_AR_HOST}/${PROJECT_ID}/${_AR_REPO}"
+
+        docker push "$${BASE}/dhis2-core:$${TAG}"
+        docker push "$${BASE}/dhis2-nginx:$${TAG}"
+
+        echo ""
+        echo "================================================================"
+        echo " Images publiées."
+        echo ""
+        echo " Tag à déployer : $${TAG}"
+        echo ""
+        echo " Déploiement en test :"
+        echo "   gcloud builds submit --config=cloudbuild-deploy.yaml \\"
+        echo "     --substitutions=_IMAGE_TAG=$${TAG},_ENV=test"
+        echo "================================================================"
+
+timeout: 2400s

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(grep -E '\\\\.sh$')",
+      "Bash(awk '{print \"  \"$1\"  \"$4}')",
+      "Bash(bash -n scripts/01-setup-gcp.sh)",
+      "Bash(awk '{print $4}')",
+      "Bash(grep -oE 'secret \"\\\\$\\\\{SECRET_PREFIX\\\\}-[a-z-]+\"' scripts/render-env.sh)"
+    ]
+  }
+}

@@ -1,0 +1,59 @@
+# =============================================================================
+# .gitignore — Projet ALIMA DHIS2
+#
+# Règle absolue : aucun secret ni aucune donnée de santé ne doit entrer dans ce
+# dépôt. Les entrées ci-dessous en sont la première ligne de défense — elles ne
+# remplacent pas la vigilance avant chaque commit.
+# =============================================================================
+
+# --- Secrets et configuration réelle -----------------------------------------
+.env
+.env.*
+!.env.example
+*.env.local
+dhis.conf
+!dhis.conf.template
+*.pem
+*.key
+*.p12
+*.jks
+credentials.json
+service-account*.json
+
+# --- Données de production ----------------------------------------------------
+# Données de santé ALIMA — aucun dump ne transite par ce dépôt (CGA, art. 13)
+*.sql
+*.dump
+*.backup
+*.tar.gz
+*.tgz
+backups/
+dumps/
+
+# --- Certificats TLS ----------------------------------------------------------
+letsencrypt/
+certs/
+
+# --- Docker -------------------------------------------------------------------
+docker-compose.override.yml
+
+# --- Système ------------------------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Éditeurs et outillage local ----------------------------------------------
+# CLAUDE.md est versionné (documentation d'équipe) ; les réglages locaux non.
+.claude/settings.local.json
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# --- Journaux -----------------------------------------------------------------
+*.log
+
+# --- Divers -------------------------------------------------------------------
+.dist/
+node_modules/

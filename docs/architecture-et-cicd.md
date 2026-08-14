@@ -1,0 +1,689 @@
+# Architecture technique et chaîne CI/CD — DHIS2 ALIMA
+
+Document de référence pour la conception de l'image Docker DHIS2, de la chaîne de
+construction/déploiement et de la gestion de la configuration.
+
+| | |
+|---|---|
+| **Projet** | Migration DHIS2 ALIMA 2.35 → 2.41 |
+| **Cible** | GCP `alima-dhis2-prod`, région `europe-west1` |
+| **Statut** | Proposition de conception — à valider avant implémentation |
+| **Version** | 1.0 |
+
+---
+
+## 1. Objet
+
+Ce document définit **comment DHIS2 est empaqueté, configuré, construit et déployé**
+pour ALIMA. Il précède l'écriture du code : le dépôt sera implémenté conformément à ce
+qui est décrit ici.
+
+Il ne couvre pas le provisionnement de l'infrastructure GCP (voir
+`scripts/01-setup-gcp.sh`, source de vérité) ni le déroulé opérationnel de la migration
+de données (voir `docs/plan-migration.md`).
+
+---
+
+## 2. Principe directeur : une image, plusieurs environnements
+
+L'ensemble de la conception découle d'une règle unique :
+
+> **L'artefact déployé en production est bit pour bit celui qui a été testé en recette.**
+
+Concrètement :
+
+- L'image Docker ne contient **aucune valeur spécifique à un environnement** : ni URL,
+  ni nom de base, ni mot de passe, ni activation de fonctionnalité.
+- Toute la configuration est injectée **au démarrage du conteneur**, par variables
+  d'environnement.
+- Une image est **construite une fois**, puis **promue** de test vers production par son
+  tag, sans reconstruction.
+
+Ce que cela apporte : ce qui est validé en recette est exactement ce qui part en
+production, le retour arrière est une simple redésignation de tag, et un secret ne peut
+pas se retrouver figé dans une couche d'image.
+
+---
+
+## 3. Stratégie d'image
+
+### 3.1 Modèle en couches
+
+| Couche | Contenu | Change entre environnements ? |
+|---|---|---|
+| **Base** | `dhis2/core:<version>` — image officielle DHIS2, non modifiée | Non — figée par le tag de version |
+| **Surcouche de configuration** | Entrypoint, configuration Tomcat, JVM, journalisation, métadonnées et éléments de marque ALIMA | Non — figée à la construction |
+| **Configuration d'exécution** | `dhis.conf` généré au démarrage à partir des variables d'environnement | Oui — à chaque environnement |
+
+Aucun code applicatif DHIS2 n'est modifié. On se repose intégralement sur la chaîne de
+construction officielle DHIS2 (multi-architecture, Java 17 pour la 2.41) et on n'y ajoute
+qu'une surcouche de configuration mince.
+
+### 3.2 Image `dhis2-web`
+
+```dockerfile
+ARG DHIS2_VERSION=2.41.x
+FROM dhis2/core:${DHIS2_VERSION}
+
+ARG BUILD_DATE=unspecified
+ARG VCS_REF=unspecified
+ARG VCS_URL=unspecified
+ARG VERSION=unspecified
+LABEL org.opencontainers.image.created=$BUILD_DATE \
+      org.opencontainers.image.title="DHIS2 Distribution ALIMA" \
+      org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.source=$VCS_URL \
+      org.opencontainers.image.vendor="ALIMA" \
+      org.opencontainers.image.version=$VERSION
+
+USER root
+
+# Surcouche Tomcat / JVM / journalisation
+COPY docker/server.xml     /usr/local/tomcat/conf/
+COPY docker/log4j2.xml     /usr/local/tomcat/conf/
+COPY docker/setenv.sh      /usr/local/tomcat/bin/setenv.sh
+
+# Entrypoint : génère dhis.conf puis démarre Tomcat
+COPY docker/init.sh        /usr/local/bin/init.sh
+COPY docker/wait-for-it.sh /usr/local/bin/wait-for-it.sh
+
+# Métadonnées et marque ALIMA
+COPY configuration/        /opt/dhis2/configuration_dhis2
+COPY docker/logo_front.png /usr/local/tomcat/
+
+RUN chmod +x /usr/local/bin/init.sh /usr/local/bin/wait-for-it.sh \
+    && mkdir -p /opt/dhis2 \
+    && chown -R 1000:1000 /opt/dhis2 /usr/local/tomcat/conf \
+       /usr/local/tomcat/logs /usr/local/tomcat/work \
+       /usr/local/tomcat/temp /usr/local/tomcat/webapps
+
+USER 1000
+
+CMD ["sh", "-c", "/usr/local/bin/init.sh"]
+```
+
+Deux points structurants :
+
+- **Version DHIS2 déclarée une seule fois**, dans `ARG DHIS2_VERSION`. La chaîne CI la
+  lit dans le Dockerfile pour composer le tag d'image — elle n'est jamais saisie deux fois.
+- **Exécution non-root** : on réutilise l'utilisateur uid/gid 1000 déjà présent dans
+  l'image de base plutôt que d'en créer un nouveau, en ajustant simplement les
+  propriétaires des répertoires que Tomcat doit écrire.
+
+Les libellés OCI (`revision`, `created`, `version`) permettent de remonter d'une image en
+production au commit exact qui l'a produite.
+
+### 3.3 Reverse proxy Nginx
+
+Nginx tourne sur la VM aux côtés du conteneur DHIS2 et assure :
+
+- la **terminaison TLS** (certificat ALIMA) ;
+- la compression gzip des réponses JSON/JS/CSS (déterminante pour la réactivité des
+  tableaux de bord analytiques) ;
+- les en-têtes de sécurité : `Strict-Transport-Security`, `X-Frame-Options`,
+  `X-Content-Type-Options`, `Referrer-Policy` ;
+- le dimensionnement des tampons proxy et des délais d'attente, réglés pour les requêtes
+  analytiques longues et les téléversements (`client_max_body_size 50M`).
+
+Nginx est un conteneur distinct de DHIS2 : un correctif de sécurité Nginx peut être
+appliqué sans reconstruire ni redémarrer l'application.
+
+---
+
+## 4. Configuration au démarrage
+
+### 4.1 Le script `init.sh`
+
+C'est la pièce centrale de la surcouche. L'image officielle `dhis2/core` ne sait pas
+produire son `dhis.conf` à partir de variables d'environnement ; `init.sh` comble ce
+manque. À chaque démarrage de conteneur, il :
+
+1. attend que la base de données soit joignable (`wait-for-it.sh`, délai maximal 60 s) ;
+2. assemble `/opt/dhis2/dhis.conf` bloc par bloc à partir des variables `DHIS2_*` ;
+3. n'écrit un bloc optionnel que si son **drapeau d'activation** vaut `true` ;
+4. démarre Tomcat (`catalina.sh run`, ou `catalina.sh jpda run` si `DEBUG=true`).
+
+Le fichier généré porte un en-tête indiquant qu'il est produit automatiquement, avec son
+horodatage — pour éviter toute modification manuelle sur la VM.
+
+### 4.2 Blocs de configuration
+
+| Bloc | Conditionné par | Contenu |
+|---|---|---|
+| Connexion base | *toujours* | `connection.url`, `connection.username`, `connection.password`, `connection.schema = update` |
+| Pool de connexions | variables présentes | `connection.pool.max_size`, `max_idle_time`, `timeout`, `db.pool.type` |
+| Identité serveur | *toujours* | `server.base.url`, `server.https` |
+| Système | variables présentes | mode lecture seule, expiration de session, protection des vues SQL, exécution serveur des règles de programme, facteur de cache |
+| Chiffrement | `DHIS2_ENCRYPTION_PASSWORD` défini | `encryption.password` |
+| SSO OpenID | `DHIS2_SSO_OPENID_ACTIVATED=true` | bloc `oidc.provider.openid.0.*` complet |
+| Nœud / cluster | `DHIS2_NODE_ID` défini | `node.id`, `node.primary_leader` |
+| Supervision | `DHIS2_METRICS_ACTIVE=true` | points de mesure API, JVM, pool BDD, uptime, CPU |
+| Redis | `DHIS2_REDIS_ENABLED=true` | hôte, port, mot de passe, SSL |
+| Base analytique séparée | `DHIS2_ANALYTICS_DB_ACTIVATED=true` | URL, identifiants, tables non journalisées |
+| Stockage de fichiers | `DHIS2_FILESTORE_PROVIDER != filesystem` | fournisseur, conteneur, emplacement, identifiants — **non écrit chez ALIMA**, le fournisseur retenu est `filesystem` (§5.2) |
+| Journalisation | variables présentes | taille et rotation des fichiers, journalisation des requêtes, niveaux |
+| App Hub | variables présentes | URL de base et d'API |
+| Sessions | `DHIS2_MAX_SESSIONS_PER_USER` défini | sessions simultanées par utilisateur |
+| API Route | variable présente | serveurs distants autorisés |
+
+Le principe des **drapeaux booléens** rend chaque fonctionnalité activable et testable
+indépendamment, sans reconstruction d'image. Une fonctionnalité désactivée n'écrit
+strictement rien dans `dhis.conf` — pas de propriété vide susceptible de dérouter DHIS2.
+
+Un mode `INSECURE=true` force `server.https = off` ; il est réservé au poste de
+développement et ne doit jamais figurer dans la configuration d'un environnement serveur.
+
+### 4.3 Dimensionnement de la JVM
+
+Le fichier `setenv.sh`, lu par Tomcat au démarrage, n'utilise **pas** de `-Xmx` figé :
+
+```sh
+JAVA_OPTS="-XX:MaxRAMPercentage=80.0"
+JAVA_OPTS="${JAVA_OPTS} -XX:+UseG1GC"
+JAVA_OPTS="${JAVA_OPTS} -XX:+UseStringDeduplication"
+JAVA_OPTS="${JAVA_OPTS} -Dfile.encoding=UTF-8"
+JAVA_OPTS="${JAVA_OPTS} -Ddhis2.home=/opt/dhis2"
+```
+
+La JVM détecte la mémoire allouée au conteneur et dimensionne son tas à 80 % de
+celle-ci. Redimensionner la VM ou la limite mémoire du conteneur suffit : aucune
+modification d'image, aucun risque d'un `-Xmx` devenu incohérent avec la machine.
+
+Une variable d'échappement `DHIS2_EXTRA_JAVA_OPTS` permet d'ajouter ponctuellement des
+options JVM sans toucher à l'image.
+
+---
+
+## 5. Architecture de déploiement
+
+```
+Utilisateurs ──HTTPS──▶ Nginx (443, TLS)
+                          │ localhost:8080
+                          ▼
+                   DHIS2 / Tomcat (Java 17)
+                          │ IP privée (VPC, Private Service Access)
+                          ▼
+                Cloud SQL PostgreSQL 16
+```
+
+Les deux conteneurs sont pilotés par `docker compose` sur `vm-dhis2-app`
+(e2-standard-2, Ubuntu 22.04). La base n'a **aucune IP publique** ; SSH n'est accessible
+que via IAP.
+
+### 5.1 `DHIS2_HOME` et persistance
+
+Tout ce que DHIS2 écrit durablement se trouve sous **`DHIS2_HOME`**, soit `/opt/dhis2`
+par défaut sous Linux :
+
+```
+/opt/dhis2/
+├── dhis.conf          généré au démarrage par init.sh
+├── files/             magasin de fichiers (filestore) — documents, images, pièces jointes
+└── logs/              journaux applicatifs DHIS2
+    ├── dhis.log                    journal principal (inclut les traitements de fond)
+    ├── dhis-analytics-table.log    génération des tables analytiques
+    ├── dhis-data-exchange.log      échanges de données
+    └── dhis-data-sync.log          synchronisations
+```
+
+Ces répertoires **doivent survivre** au remplacement du conteneur — ce qui est précisément
+ce qui se produit à chaque déploiement. D'où trois volumes Docker nommés.
+
+### 5.2 Volumes Docker
+
+| Volume | Point de montage | Contenu | Sauvegarde | Critique ? |
+|---|---|---|---|---|
+| `dhis2-home` | `/opt/dhis2` | `dhis.conf` généré | non | non — regénéré à chaque démarrage |
+| `dhis2-files` | `/opt/dhis2/files` | magasin de fichiers | **oui — hebdomadaire vers Cloud Storage + snapshot quotidien** | **oui — irrécupérable si perdu** |
+| `dhis2-logs` | `/opt/dhis2/logs` | journaux applicatifs | non — rotation en place | non |
+
+Trois volumes plutôt qu'un seul, parce que leurs **cycles de vie diffèrent** : les
+fichiers sont irremplaçables et doivent être sauvegardés ; les journaux sont volumineux,
+rotatifs et jetables ; `dhis.conf` est reconstruit à chaque démarrage. Les mélanger
+reviendrait soit à sauvegarder des gigaoctets de journaux inutiles, soit à faire courir
+un risque au magasin de fichiers.
+
+**Le magasin de fichiers reste sur disque** (`DHIS2_FILESTORE_PROVIDER=filesystem`) :
+tant que DHIS2 tourne sur une seule VM, le stockage objet n'apporte rien qu'un snapshot
+de disque persistant ne couvre déjà. Ce choix doit toutefois être fait **maintenant, pas
+plus tard** : la documentation DHIS2 avertit que déplacer les fichiers d'un fournisseur
+de stockage à un autre en préservant l'intégrité des références en base est une opération
+complexe.
+
+Trois points de mise en œuvre :
+
+- **Disque SSD obligatoire.** La documentation DHIS2 est explicite : le SSD est
+  indispensable en production. Les volumes sont hébergés sur le disque persistant SSD de
+  la VM.
+- **Propriété des volumes.** Un volume nommé hérite, à sa création, du propriétaire du
+  répertoire correspondant dans l'image. Le `chown -R 1000:1000 /opt/dhis2` du Dockerfile
+  (§3.2) est donc ce qui garantit que le conteneur non-root pourra écrire. C'est un piège
+  classique : si le `chown` disparaît du Dockerfile, DHIS2 échoue au démarrage sur un
+  volume neuf.
+- **`dhis.conf` contient des secrets en clair** une fois généré. Le fichier est créé en
+  mode `0600` et le volume `dhis2-home` hérite de la protection du disque. Les snapshots
+  de ce disque sont à traiter comme des données sensibles.
+
+### 5.3 Journalisation
+
+DHIS2 indique que la journalisation vers `catalina.out` / la sortie standard sera
+progressivement abandonnée et **recommande de s'appuyer sur les journaux sous
+`DHIS2_HOME`**. La conception en tient compte :
+
+| Flux | Destination | Collecte |
+|---|---|---|
+| Journaux applicatifs DHIS2 | volume `dhis2-logs` | agent Ops de la VM, en lecture sur le chemin du volume |
+| Sortie standard Tomcat | tmpfs (éphémère) | — |
+| Journaux Nginx | sortie standard du conteneur | pilote de journalisation Docker → Cloud Logging |
+
+**La rotation doit être configurée explicitement.** Par défaut,
+`logging.file.max_archives = 0` : aucune archive n'est conservée et les fichiers sont
+plafonnés, mais un paramétrage explicite évite toute surprise sur la taille du volume.
+Valeurs retenues :
+
+```properties
+logging.file.max_size     = 100MB
+logging.file.max_archives = 5
+logging.level.org.hisp.dhis      = INFO
+logging.level.org.springframework = WARN
+```
+
+Le volume `dhis2-logs` est ainsi borné de façon prévisible et ne peut pas saturer le
+disque de la VM.
+
+### 5.4 Esquisse de `docker-compose.yml`
+
+> Extrait de principe. La version qui fait foi est
+> [`docker/docker-compose.yml`](../docker/docker-compose.yml) — elle ajoute
+> notamment le service de base local (profil `local`) et les services de
+> sauvegarde/restauration (profils `backup` / `restore`).
+
+```yaml
+services:
+  dhis2:
+    image: europe-west1-docker.pkg.dev/alima-dhis2-prod/dhis2-images/dhis2-core:${IMAGE_TAG}
+    env_file: [.env]                 # généré depuis Secret Manager, hors dépôt
+    volumes:
+      - dhis2-home:/opt/dhis2
+      - dhis2-files:/opt/dhis2/files
+      - dhis2-logs:/opt/dhis2/logs
+      - type: tmpfs
+        target: /tmp
+      - type: tmpfs
+        target: /usr/local/tomcat/temp
+      - type: tmpfs
+        target: /usr/local/tomcat/logs
+      - type: tmpfs
+        target: /usr/local/tomcat/work/Catalina/localhost/ROOT
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/system/ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 300s             # DHIS2 démarre lentement, surtout après migration
+    restart: unless-stopped
+    read_only: true                  # racine en lecture seule — seuls les volumes sont inscriptibles
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  nginx:
+    image: europe-west1-docker.pkg.dev/alima-dhis2-prod/dhis2-images/dhis2-nginx:${IMAGE_TAG}
+    depends_on: [dhis2]
+    # Nginx écoute sur 8080/8443 dans le conteneur : sans capacités, un
+    # processus non-root ne peut pas se lier aux ports privilégiés. C'est
+    # Docker qui publie 80/443 côté hôte.
+    ports: ["80:8080", "443:8443"]
+    volumes:
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp, /var/cache/nginx, /var/run]
+
+volumes:
+  dhis2-home: {}
+  dhis2-files: {}
+  dhis2-logs: {}
+```
+
+Le durcissement (`read_only`, `cap_drop: ALL`, `no-new-privileges`, `tmpfs` pour les
+répertoires temporaires de Tomcat) suit le déploiement Docker de référence publié par
+l'équipe DHIS2. Il n'a de coût qu'à la mise au point : la racine du conteneur devient
+non inscriptible, ce qui rend visible toute écriture non prévue hors des volumes.
+
+### 5.5 Sauvegarde et restauration du magasin de fichiers
+
+Le magasin de fichiers est **hors base de données** : une sauvegarde PostgreSQL ne le
+couvre pas. Une base restaurée sans son magasin de fichiers présente des références
+brisées vers des documents absents.
+
+| Élément | Mécanisme | Fréquence | Rétention |
+|---|---|---|---|
+| Base de données | sauvegardes automatiques Cloud SQL + PITR | continu | selon politique Cloud SQL |
+| Base — export logique | `pg_dump` vers Cloud Storage | hebdomadaire | 30 jours |
+| **Magasin de fichiers** | **archive du volume `dhis2-files` vers Cloud Storage** | **hebdomadaire** | **30 jours** |
+| Volumes (bloc) | snapshot du disque persistant | quotidien | selon politique |
+
+Les opérations de sauvegarde et de restauration du magasin de fichiers sont portées par
+des services `docker compose` dédiés, activés par **profils** (`--profile backup`,
+`--profile restore`), montant `dhis2-files` en lecture seule. Elles ne tournent donc pas
+en permanence et ne peuvent pas interférer avec le service.
+
+Le test de restauration semestriel prévu au contrat de support doit porter sur **les
+deux** : base *et* magasin de fichiers.
+
+---
+
+## 6. Gestion des secrets
+
+Aucun secret n'entre dans le dépôt Git, ni dans une couche d'image, ni dans un fichier
+de configuration versionné.
+
+| Contexte | Stockage | Injection |
+|---|---|---|
+| Poste de développement | fichier `.env` **non versionné** | directive `env_file` de docker compose |
+| Chaîne CI/CD | Secret Manager | accès par le compte de service Cloud Build |
+| VM (test et production) | **Secret Manager** | lecture au démarrage du service, matérialisée en fichier `.env` à permissions restreintes, hors dépôt |
+
+Variables à traiter obligatoirement comme secrets :
+
+| Variable | Contenu |
+|---|---|
+| `DHIS2_DATABASE_PASSWORD` | mot de passe PostgreSQL du compte applicatif |
+| `DHIS2_DATABASE_USER` | nom d'utilisateur PostgreSQL — traité en secret par défense en profondeur |
+| `DHIS2_ENCRYPTION_PASSWORD` | clé de chiffrement des données DHIS2 |
+| `DHIS2_SSO_OPENID_CLIENT_SECRET` | secret client OAuth, si le SSO est activé |
+| `DHIS2_FILESTORE_SECRET` | clé secrète de stockage objet, si utilisé |
+
+Organisation dans Secret Manager :
+
+```
+dhis2-db-password            mot de passe BDD production
+dhis2-db-user                utilisateur BDD production
+dhis2-encryption-password    clé de chiffrement
+dhis2-test-db-password       équivalents pour l'environnement de test
+```
+
+Le dépôt ne contient que des **modèles** : `dhis.conf.template` (référence complète des
+propriétés, commentée) et `.env.example` (liste exhaustive des variables, valeurs
+factices). Ils servent de documentation vivante ; toute variable ajoutée à `init.sh` doit
+y être reportée dans le même commit.
+
+> ⚠️ Le `.gitignore` doit exclure, dès le premier commit : `.env`, `*.env.local`,
+> `dhis.conf` (le fichier réel, pas le modèle), `*.sql`, `*.dump`, `*.backup`, `*.pem`,
+> `*.key`. Le point sur les dumps n'est pas théorique : il s'agit de données de santé,
+> couvertes par l'article 13 du CGA ALIMA.
+
+---
+
+## 7. Chaîne CI/CD
+
+### 7.1 Séparation construction / déploiement
+
+Construire et déployer sont **deux opérations distinctes**, portées par des
+configurations distinctes.
+
+| Pipeline | Déclencheur | Rôle |
+|---|---|---|
+| `cloudbuild.yaml` | push sur `main` (hors `**/*.md`) | construit l'image, la pousse dans Artifact Registry |
+| `cloudbuild-deploy.yaml` | **manuel**, paramètre `_IMAGE_TAG` | déploie un tag existant sur l'environnement visé |
+
+Pourquoi les séparer : un déploiement doit pouvoir rejouer **n'importe quel tag déjà
+construit** — notamment le précédent, pour un retour arrière — sans dépendre d'une
+reconstruction ni de l'état actuel de `main`.
+
+### 7.2 Construction
+
+```
+push sur main
+   │
+   ▼
+Cloud Build
+   ├── lit ARG DHIS2_VERSION dans docker/Dockerfile
+   ├── compose le tag : <version>-<YYYYMMDD>-<build-id>
+   ├── docker build (--pull, injection de VCS_REF / BUILD_DATE / VERSION)
+   └── push vers Artifact Registry
+```
+
+Le `--pull` garantit qu'on repart toujours de l'image de base officielle à jour. Les
+arguments de construction inscrivent le commit et l'horodatage dans les libellés de
+l'image.
+
+**Nommage des tags** — deux formats, pour distinguer sans ambiguïté ce qui a vocation à
+partir en production :
+
+| Origine | Format | Exemple |
+|---|---|---|
+| Construction d'intégration (push sur `main`) | `dev.<version>.<YYYYMMDD>.<nn>` | `dev.2.41.4.20260315.01` |
+| Construction de publication (manuelle) | `<version>.<YYYYMMDD>.<nn>` | `2.41.4.20260315.01` |
+
+Le tag mobile `latest` peut être maintenu pour confort, mais **aucun déploiement ne s'y
+réfère** : on déploie toujours un tag immuable, sans quoi le retour arrière et l'audit
+deviennent impossibles.
+
+### 7.3 Déploiement
+
+```
+Déclenchement manuel avec _IMAGE_TAG
+   │
+   ▼
+[TEST]  déploiement automatique ──▶ validation fonctionnelle
+   │
+   ▼
+[APPROBATION MANUELLE]  ← référent ALIMA ou consultant selon la phase
+   │
+   ▼
+[PRODUCTION]  mise à jour du tag dans .env sur la VM
+              docker compose pull && docker compose up -d
+              attente du démarrage, vérification /api/system/info
+```
+
+L'approbation manuelle est portée par le **trigger Cloud Build** de production, pas par
+le contenu du dépôt : personne ne peut la contourner par un commit.
+
+Chaque étape de déploiement est **idempotente** et se termine par une vérification
+active — on n'annonce un déploiement réussi qu'après avoir obtenu une réponse de
+`/api/system/info` sur la nouvelle version.
+
+### 7.4 Retour arrière
+
+Redéclencher le pipeline de déploiement avec le tag précédent. Aucune reconstruction,
+aucune manipulation manuelle sur la VM. Le délai de retour arrière est celui d'un
+`docker compose pull && up -d`, soit quelques minutes.
+
+La politique de nettoyage d'Artifact Registry (5 versions conservées, purge au-delà de
+30 jours) doit être calibrée pour qu'un tag encore susceptible de servir au retour
+arrière ne soit jamais purgé.
+
+---
+
+## 8. Environnements
+
+| | Test | Production |
+|---|---|---|
+| Déploiement | automatique après construction | **approbation manuelle obligatoire** |
+| Base de données | Cloud SQL, instance de test | Cloud SQL `pg16-dhis2-prod` |
+| `DHIS2_FQDN` | URL de test | URL de production ALIMA |
+| Secrets | `dhis2-test-*` | `dhis2-*` |
+| Supervision | activée | activée |
+| Sauvegardes | non | automatiques + PITR |
+
+**Ce qui change entre les deux : uniquement des variables d'environnement et des
+références de secrets.** L'image, le `docker-compose.yml` et le `nginx.conf` sont
+identiques. Si un correctif nécessite de modifier autre chose qu'une variable, c'est le
+signe que quelque chose a été figé au mauvais endroit.
+
+---
+
+## 9. Spécificité ALIMA : la migration par paliers
+
+Point de divergence majeur avec une exploitation courante : le passage de 2.35 à 2.41
+n'est pas un simple changement de tag. Les migrations de schéma Flyway doivent
+s'appliquer **palier par palier** :
+
+```
+2.35 ──▶ 2.36 ──▶ 2.38 ──▶ 2.40 ──▶ 2.41
+```
+
+Chaque palier suit la même mécanique :
+
+1. `ARG DHIS2_VERSION` positionné sur la version du palier ;
+2. construction de l'image correspondante ;
+3. démarrage sur la copie de base — les migrations Flyway s'exécutent ;
+4. **validation avant de passer au palier suivant** : démarrage sans erreur, journaux
+   Flyway propres, connexion applicative, cohérence des métadonnées, génération des
+   tables analytiques.
+
+Cette conception sert directement cet objectif : chaque palier est une image traçable,
+construite par la même chaîne, et l'on conserve à chaque étape la possibilité de repartir
+du palier précédent.
+
+**Règle absolue rappelée** : la base de production 2.35 n'est jamais modifiée. La
+migration se déroule intégralement sur une copie, en parallèle, jusqu'à la bascule
+finale.
+
+### 9.1 Le magasin de fichiers se migre séparément
+
+Point à ne pas manquer : **le dump PostgreSQL ne contient pas les fichiers**. Sur
+l'instance 2.35, ils se trouvent dans le répertoire `files/` sous `DHIS2_HOME`. Ils
+doivent être copiés vers le volume `dhis2-files` de la nouvelle instance, sans quoi la
+base migrée référencera des documents introuvables.
+
+Cette copie fait partie de la procédure de bascule, au même titre que la restauration du
+dump :
+
+1. **Audit (S1)** — relever l'emplacement exact et la **volumétrie** du répertoire
+   `files/` sur le serveur 2.35 ; cette taille conditionne le dimensionnement du disque
+   de la nouvelle VM.
+2. **Dry-run (S3)** — copie complète (`rsync`), puis vérification par sondage que les
+   pièces jointes s'ouvrent correctement depuis l'application migrée.
+3. **Bascule (S4)** — copie différentielle pendant le gel des saisies, pour ne
+   retransférer que ce qui a changé et réduire d'autant la fenêtre d'indisponibilité.
+
+Deux validations conditionnent le Go-Live et sont propres à ALIMA :
+
+- **intégration Power BI** — les connexions et jeux de données doivent être vérifiés sur
+  la 2.41 avant la bascule ;
+- **restauration** — un test de restauration complet doit être exécuté avant, et une
+  fois après la mise en production.
+
+---
+
+## 10. Structure cible du dépôt
+
+```
+.
+├── CLAUDE.md
+├── README.md                     présentation, démarrage rapide, conventions
+├── .gitignore                    secrets, dumps, certificats — exclus par défaut
+├── cloudbuild.yaml               construction : images → Artifact Registry
+├── cloudbuild-deploy.yaml        déploiement : tag → environnement (approbation en prod)
+├── docker/
+│   ├── Dockerfile                image dhis2-core ALIMA (FROM dhis2/core)
+│   ├── docker-compose.yml        pile applicative + profils local/backup/restore
+│   ├── .env.example              liste exhaustive des variables, valeurs factices
+│   ├── dhis.conf.template        référence des propriétés générées par init.sh
+│   ├── init.sh                   entrypoint : génère dhis.conf, démarre Tomcat
+│   ├── setenv.sh                 options JVM (dimensionnement proportionnel)
+│   ├── server.xml                Tomcat : RemoteIpValve, relaxedQueryChars
+│   ├── wait-for-it.sh            attente de disponibilité de la base
+│   └── nginx/
+│       ├── Dockerfile            image dhis2-nginx
+│       └── nginx.conf            TLS, gzip, en-têtes de sécurité, tampons proxy
+├── configuration/                métadonnées DHIS2 à charger (JSON)
+├── scripts/
+│   ├── 01-setup-gcp.sh           provisionnement — source de vérité
+│   ├── install-vm.sh             Docker, volumes, TLS, agent Ops sur la VM
+│   ├── render-env.sh             génère .env depuis Secret Manager (sur la VM)
+│   ├── backup-filestore.sh       archive le volume dhis2-files vers Cloud Storage
+│   ├── restore-filestore.sh      restaure le magasin de fichiers depuis une archive
+│   └── 99-cleanup-gcp.sh         suppression de l'infrastructure
+└── docs/
+    ├── architecture-et-cicd.md   ce document
+    ├── variables-environnement.md  taxonomie complète des variables DHIS2_*
+    ├── plan-migration.md         déroulé des paliers et procédures de bascule
+    └── exploitation.md           supervision, sauvegardes, incidents courants
+```
+
+**Pas de `log4j2.xml`.** La journalisation se pilote par les propriétés
+`logging.*` de `dhis.conf`, comme le documente DHIS2. Remplacer la configuration
+log4j2 de l'image de base risquerait de casser l'écriture des journaux sous
+`DHIS2_HOME` — précisément ce sur quoi repose la collecte (§5.3). Le déploiement
+Docker de référence DHIS2 laisse d'ailleurs ce montage commenté.
+
+---
+
+## 11. Décisions de conception
+
+| Réf. | Décision | Justification |
+|---|---|---|
+| **D1** | Utiliser `dhis2/core` comme base non modifiée | On hérite de la chaîne de construction officielle DHIS2 (multi-architecture, Java 17) et de ses correctifs, sans dette de maintenance |
+| **D2** | Générer `dhis.conf` au démarrage, pas à la construction | Un seul artefact pour tous les environnements ; aucun secret dans une couche d'image |
+| **D3** | Drapeaux booléens pour les blocs optionnels | Chaque fonctionnalité (SSO, supervision, Redis) est activable et testable isolément, sans reconstruction |
+| **D4** | Dimensionnement JVM proportionnel (`MaxRAMPercentage`) | S'adapte automatiquement au redimensionnement de la VM ; supprime une classe entière d'incidents mémoire |
+| **D5** | Nginx en conteneur distinct | Correctif de sécurité Nginx applicable sans toucher à DHIS2 |
+| **D6** | Tags d'image immuables, jamais `latest` en déploiement | Un tag en production désigne toujours exactement la même image — condition du retour arrière et de l'audit |
+| **D7** | Construction et déploiement dans deux pipelines séparés | Permet de redéployer n'importe quel tag antérieur sans reconstruction |
+| **D8** | Approbation manuelle portée par le trigger, pas par le dépôt | Le contrôle ne peut pas être contourné par un commit |
+| **D9** | Cloud SQL managé plutôt que PostgreSQL sur la VM | Sauvegardes automatiques, PITR, correctifs et supervision pris en charge ; supprime le principal point de fragilité de l'instance actuelle |
+| **D10** | Base sans IP publique, SSH via IAP uniquement | Surface d'exposition minimale — exigence renforcée par la nature des données |
+| **D11** | Aucun identifiant d'infrastructure en dur dans les pipelines | Les identifiants de sous-réseau, de service et de projet passent par des substitutions ; le dépôt reste transposable et lisible |
+| **D12** | Magasin de fichiers sur disque (`filestore.provider = filesystem`) | Cohérent avec le modèle mono-VM ; couvert par les snapshots. Choix à figer dès le départ : la documentation DHIS2 avertit qu'un changement ultérieur de fournisseur est complexe à mener sans casser les références en base |
+| **D13** | Trois volumes distincts (`home`, `files`, `logs`) plutôt qu'un seul | Cycles de vie et politiques de sauvegarde différents : les fichiers sont irremplaçables, les journaux sont jetables, `dhis.conf` est reconstruit |
+| **D14** | S'appuyer sur les journaux de `DHIS2_HOME`, pas sur `catalina.out` | DHIS2 annonce l'abandon progressif de la journalisation vers la sortie standard ; la sortie Tomcat est donc laissée en tmpfs et l'agent Ops lit le volume `dhis2-logs` |
+| **D15** | Rotation des journaux configurée explicitement | La valeur par défaut `logging.file.max_archives = 0` n'offre aucune garantie de dimensionnement ; un paramétrage explicite borne le volume de façon prévisible |
+| **D16** | Durcissement des conteneurs (racine en lecture seule, `cap_drop: ALL`, `no-new-privileges`, tmpfs) | Aligné sur le déploiement Docker de référence DHIS2 ; rend visible toute écriture hors des volumes prévus |
+| **D17** | Sauvegarde du magasin de fichiers distincte de celle de la base | Un dump PostgreSQL ne contient pas les fichiers : restaurer la base seule produit des références brisées |
+
+---
+
+## 12. Points à trancher avant implémentation
+
+| # | Question | Impact | Proposition |
+|---|---|---|---|
+| 1 | Volumétrie actuelle du répertoire `files/` sur l'instance 2.35 ? | Dimensionnement du disque de la VM et durée de la copie à la bascule | **À relever pendant l'audit S1** — élément bloquant pour le dimensionnement |
+| 2 | SSO OpenID à activer ? Sur quel annuaire ? | Prévoir le bloc et le secret dès la conception, même désactivé | Prévoir le bloc, `DHIS2_SSO_OPENID_ACTIVATED=false` au départ |
+| 3 | L'environnement de test est-il permanent ou éphémère ? | Coût mensuel, disponibilité pour les recettes | Permanent pendant les 4 semaines, décision à revoir ensuite |
+| 4 | Rétention Artifact Registry compatible avec la fenêtre de retour arrière ? | Un tag purgé = retour arrière impossible | Vérifier que les 5 versions conservées couvrent le besoin post-bascule |
+| 5 | `CLAUDE.md` versionné ou ignoré ? | Cohérence de la documentation d'équipe | Versionné — il fait partie de la documentation du dépôt |
+| 6 | Qui approuve les déploiements en production, et à partir de quelle phase ? | Chaîne de responsabilité au Go-Live | Consultant jusqu'à la bascule, référent ALIMA ensuite |
+| 7 | Point de terminaison exact de la sonde de disponibilité | Une sonde inadaptée signale un service en panne alors qu'il fonctionne | `/api/system/ping` — à confirmer sur l'image 2.41 retenue. `curl` est bien présent dans `dhis2/core` : le déploiement de référence DHIS2 s'en sert |
+| 8 | Journalisation d'audit système (`SYSTEM_AUDIT_ENABLED`) activée ? | Volumétrie des journaux et de la base, exigences de traçabilité | Désactivée par défaut ; à activer si ALIMA a une exigence d'audit explicite |
+
+---
+
+## 13. Sources de référence
+
+La conception s'appuie sur la documentation officielle DHIS2 et sur le déploiement Docker
+de référence publié par l'équipe DHIS2 :
+
+| Source | Ce qui en est repris |
+|---|---|
+| [Documentation d'administration DHIS2](https://docs.dhis2.org/en/manage/manage.html) | prérequis serveur, SSD obligatoire en production, dimensionnement proportionnel à la RAM et au CPU |
+| [Référence `dhis.conf`](https://docs.dhis2.org/en/manage/reference/dhisconf.html) | propriétés de configuration et emplacement de `DHIS2_HOME` |
+| [Stockage de fichiers](https://docs.dhis2.org/en/manage/reference/file-storage.html) | fournisseurs disponibles, emplacement `files/` sous `DHIS2_HOME`, avertissement sur le changement de fournisseur, exigence de sauvegarde et de protection d'accès |
+| [Journalisation](https://docs.dhis2.org/en/manage/reference/logging.html) | fichiers produits sous `DHIS2_HOME/logs`, propriétés de rotation, abandon annoncé de `catalina.out` |
+| [Déploiement Docker de référence DHIS2](https://github.com/dhis2/docker-deployment) | organisation des volumes, tmpfs pour les répertoires temporaires de Tomcat, durcissement des conteneurs, sonde de disponibilité, sauvegarde/restauration par profils compose |
+
+> **Réserve importante** : le dépôt de déploiement Docker de référence est publié en
+> version 1.0 comme « prêt pour test public » et **n'est pas recommandé par ses auteurs
+> pour un usage en production** à ce stade. Nous en reprenons les *choix techniques*
+> — organisation des volumes, durcissement, séparation des sauvegardes — sans l'adopter
+> tel quel. La documentation DHIS2 recommande, pour la production, l'installation
+> automatisée par Ansible ; le choix du conteneur pour ALIMA est délibéré et se justifie
+> par l'exigence de chaîne CI/CD et de reproductibilité entre paliers de migration.
+
+---
+
+## 14. Suites
+
+1. Validation de ce document avec le référent SI ALIMA.
+2. Relevé de la volumétrie du magasin de fichiers de l'instance 2.35 (§12, point 1).
+3. Rédaction de `docs/variables-environnement.md` — taxonomie exhaustive des variables
+   `DHIS2_*`, avec valeur par défaut, propriété `dhis.conf` correspondante et caractère
+   sensible ou non.
+4. Création du squelette du dépôt conformément au §10.
+5. Construction de la première image 2.35 (palier de départ) et validation de la chaîne
+   de bout en bout sur l'environnement de test — **y compris la persistance** : redémarrer
+   la pile et vérifier que fichiers et journaux survivent au remplacement du conteneur.

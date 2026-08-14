@@ -1,0 +1,158 @@
+# =============================================================================
+# dhis.conf.template — référence des propriétés DHIS2 générées par init.sh
+#
+# ⚠ CE FICHIER N'EST PAS LU PAR L'APPLICATION.
+#
+# Le dhis.conf réel est produit au démarrage du conteneur par docker/init.sh,
+# à partir des variables d'environnement. Ce modèle sert de référence : il
+# documente, propriété par propriété, ce que init.sh écrit et quelle variable
+# la pilote.
+#
+# Toute propriété ajoutée à init.sh doit apparaître ici dans le même commit.
+#
+# Référence officielle :
+#   https://docs.dhis2.org/en/manage/reference/dhisconf.html
+#
+# Format : propriété = valeur              # ← VARIABLE_QUI_LA_PILOTE
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Connexion à la base de données — OBLIGATOIRE, toujours écrit
+# -----------------------------------------------------------------------------
+connection.dialect = org.hibernate.dialect.PostgreSQLDialect
+connection.driver_class = org.postgresql.Driver
+connection.url = jdbc:postgresql://HOST:PORT/NAME   # DHIS2_DATABASE_HOST / _PORT / _NAME
+connection.username = dhis                          # DHIS2_DATABASE_USER      (SECRET)
+connection.password = ********                      # DHIS2_DATABASE_PASSWORD  (SECRET)
+connection.schema = update
+
+# -----------------------------------------------------------------------------
+# Pool de connexions — écrit si la variable correspondante est définie
+# -----------------------------------------------------------------------------
+connection.pool.max_size = 40                    # DHIS2_CONNECTION_POOL_MAX_SIZE
+connection.pool.max_idle_time = 7200000          # DHIS2_CONNECTION_POOL_MAX_IDLE_TIME
+connection.pool.timeout = 30000                  # DHIS2_CONNECTION_POOL_TIMEOUT
+connection.pool.validation_timeout = 5000        # DHIS2_CONNECTION_POOL_VALIDATION_TIMEOUT
+db.pool.type = hikari                            # DHIS2_DB_POOL_TYPE
+
+# -----------------------------------------------------------------------------
+# Identité du serveur — OBLIGATOIRE, toujours écrit
+# -----------------------------------------------------------------------------
+server.base.url = https://dhis2.alima.ngo        # DHIS2_FQDN
+server.https = on                                # DHIS2_SERVER_HTTPS (off si INSECURE=true)
+
+# -----------------------------------------------------------------------------
+# Système
+# -----------------------------------------------------------------------------
+system.read_only_mode = off                      # DHIS2_SYSTEM_READ_ONLY_MODE
+system.session.timeout = 3600                    # DHIS2_SYSTEM_SESSION_TIMEOUT
+system.sql_view_table_protection = on            # DHIS2_SQL_VIEW_TABLE_PROTECTION (défaut : on)
+system.sql_view_write_enabled = off              # DHIS2_SQL_VIEW_WRITE_ENABLED
+system.program_rule.server_execution = on        # DHIS2_SERVER_SIDE_PROGRAM_RULE_EXECUTION
+system.cache.max_size.factor = 0.5               # DHIS2_SYSTEM_CACHE_MAX_SIZE_FACTOR
+metadata.sync.remote_servers_allowed =           # DHIS2_METADATA_SYNC_REMOTE_SERVERS
+system.update_notifications_enabled = on         # DHIS2_SYSTEM_UPDATE_NOTIFICATIONS
+
+# -----------------------------------------------------------------------------
+# Chiffrement — écrit si DHIS2_ENCRYPTION_PASSWORD est défini
+#
+# ⚠ Ne JAMAIS changer cette valeur après la mise en service : les données déjà
+#   chiffrées deviendraient illisibles.
+# -----------------------------------------------------------------------------
+encryption.password = ********                   # DHIS2_ENCRYPTION_PASSWORD (SECRET)
+
+# -----------------------------------------------------------------------------
+# SSO OpenID — bloc écrit uniquement si DHIS2_SSO_OPENID_ACTIVATED=true
+# -----------------------------------------------------------------------------
+oidc.provider.openid.0.client_id =               # DHIS2_SSO_OPENID_CLIENT_ID
+oidc.provider.openid.0.client_secret = ********  # DHIS2_SSO_OPENID_CLIENT_SECRET (SECRET)
+oidc.provider.openid.0.authorization_uri =       # DHIS2_SSO_OPENID_AUTHORIZATION_URI
+oidc.provider.openid.0.token_uri =               # DHIS2_SSO_OPENID_TOKEN_URI
+oidc.provider.openid.0.userinfo_uri =            # DHIS2_SSO_OPENID_USERINFO_URI
+oidc.provider.openid.0.jwk_uri =                 # DHIS2_SSO_OPENID_JWK_URI
+oidc.provider.openid.0.redirect_url =            # DHIS2_SSO_OPENID_REDIRECT_URL
+oidc.provider.openid.0.mapping_claim = email     # DHIS2_SSO_OPENID_MAPPING_CLAIM
+
+# -----------------------------------------------------------------------------
+# Nœud / cluster — bloc écrit uniquement si DHIS2_NODE_ID est défini
+# -----------------------------------------------------------------------------
+node.id =                                        # DHIS2_NODE_ID
+node.primary_leader = false                      # DHIS2_NODE_PRIMARY_LEADER
+
+# -----------------------------------------------------------------------------
+# Supervision — bloc écrit uniquement si DHIS2_METRICS_ACTIVE=true
+# -----------------------------------------------------------------------------
+monitoring.api.enabled = on                      # DHIS2_MONITORING_API
+monitoring.jvm.enabled = on                      # DHIS2_MONITORING_JVM
+monitoring.hibernate.enabled = off               # DHIS2_MONITORING_HIBERNATE
+monitoring.dbpool.enabled = on                   # DHIS2_MONITORING_DBPOOL
+monitoring.uptime.enabled = on                   # DHIS2_MONITORING_UPTIME
+monitoring.cpu.enabled = on                      # DHIS2_MONITORING_CPU
+
+# -----------------------------------------------------------------------------
+# Redis — bloc écrit uniquement si DHIS2_REDIS_ENABLED=true
+# Nécessaire seulement en déploiement multi-instances.
+# -----------------------------------------------------------------------------
+redis.enabled = true                             # DHIS2_REDIS_ENABLED
+redis.host = localhost                           # DHIS2_REDIS_HOST
+redis.port = 6379                                # DHIS2_REDIS_PORT
+redis.password = ********                        # DHIS2_REDIS_PASSWORD (SECRET)
+redis.use.ssl = off                              # DHIS2_REDIS_USE_SSL
+
+# -----------------------------------------------------------------------------
+# Base analytique séparée — bloc écrit si DHIS2_ANALYTICS_DB_ACTIVATED=true
+# -----------------------------------------------------------------------------
+analytics.connection.driver_class = org.postgresql.Driver
+analytics.connection.url =                       # DHIS2_ANALYTICS_DB_URL
+analytics.connection.username =                  # DHIS2_ANALYTICS_DB_USERNAME
+analytics.connection.password = ********         # DHIS2_ANALYTICS_DB_PASSWORD (SECRET)
+analytics.table.unlogged = on                    # DHIS2_ANALYTICS_TABLE_UNLOGGED
+analytics.connection.pool.max_size = 40          # DHIS2_ANALYTICS_POOL_MAX_SIZE
+
+# -----------------------------------------------------------------------------
+# Magasin de fichiers
+#
+# ALIMA conserve le fournisseur par défaut "filesystem" : les fichiers sont
+# écrits dans DHIS2_HOME/files, monté sur le volume dhis2-files. Dans ce cas,
+# AUCUNE de ces propriétés n'est écrite dans dhis.conf.
+#
+# ⚠ Changer de fournisseur après la mise en service est une opération complexe :
+#   les références en base doivent rester cohérentes avec l'emplacement réel
+#   des fichiers. La décision se fige avant le Go-Live.
+# -----------------------------------------------------------------------------
+filestore.provider = filesystem                  # DHIS2_FILESTORE_PROVIDER
+filestore.container =                            # DHIS2_FILESTORE_CONTAINER
+filestore.location =                             # DHIS2_FILESTORE_LOCATION
+filestore.endpoint =                             # DHIS2_FILESTORE_ENDPOINT
+filestore.identity =                             # DHIS2_FILESTORE_IDENTITY (SECRET)
+filestore.secret = ********                      # DHIS2_FILESTORE_SECRET   (SECRET)
+
+# -----------------------------------------------------------------------------
+# Journalisation — toujours écrit
+#
+# DHIS2 écrit ses journaux dans DHIS2_HOME/logs (volume dhis2-logs) :
+#   dhis.log, dhis-analytics-table.log, dhis-data-exchange.log,
+#   dhis-data-sync.log
+#
+# La rotation est fixée explicitement : la valeur par défaut de
+# max_archives (0) n'offre aucune garantie de dimensionnement du volume.
+# -----------------------------------------------------------------------------
+logging.file.max_size = 100MB                    # DHIS2_LOGGING_FILE_MAX_SIZE
+logging.file.max_archives = 5                    # DHIS2_LOGGING_FILE_MAX_ARCHIVES
+logging.query = off                              # DHIS2_LOGGING_QUERY
+logging.query.slow_threshold = 1000              # DHIS2_LOGGING_QUERY_SLOW_THRESHOLD
+logging.session_id = on                          # DHIS2_LOGGING_SESSION_ID
+logging.level.org.hisp.dhis = INFO               # DHIS2_LOGGING_LEVEL_DHIS
+logging.level.org.springframework = WARN         # DHIS2_LOGGING_LEVEL_SPRING
+
+# -----------------------------------------------------------------------------
+# App Hub
+# -----------------------------------------------------------------------------
+apphub.base.url = https://apps.dhis2.org         # DHIS2_APPHUB_BASE_URL
+apphub.api.url = https://apps.dhis2.org/api      # DHIS2_APPHUB_API_URL
+
+# -----------------------------------------------------------------------------
+# Sessions et API Route
+# -----------------------------------------------------------------------------
+max.sessions.per_user = 10                       # DHIS2_MAX_SESSIONS_PER_USER
+route.remote_servers_allowed =                   # DHIS2_ROUTE_REMOTE_SERVERS_ALLOWED
