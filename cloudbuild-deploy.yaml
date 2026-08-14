@@ -159,6 +159,12 @@ steps:
   # Un déploiement n'est annoncé réussi qu'après réponse de l'application.
   # Sans cette étape, un conteneur qui redémarre en boucle passerait pour un
   # succès.
+  #
+  # La boucle d'attente vit dans scripts/wait-healthy.sh et non ici : écrite en
+  # ligne, elle exigeait trois niveaux d'échappement imbriqués — YAML, shell
+  # local, shell distant — et deux défauts s'y étaient glissés : une variable
+  # shell prise pour une substitution Cloud Build, et une apostrophe fermant un
+  # guillemet trop tôt. Un fichier exécuté tel quel supprime le problème.
   - id: verify
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:alpine
     waitFor: [deploy]
@@ -170,27 +176,7 @@ steps:
         VM=$(cat /workspace/vm.txt)
 
         gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
-          --command "set -uo pipefail
-            echo 'Attente du démarrage de DHIS2 (jusqu\'à 10 minutes)...'
-            for i in \$(seq 1 60); do
-              STATE=\$(sudo docker inspect -f '{{.State.Health.Status}}' dhis2 2>/dev/null || echo unknown)
-              if [ \"\$STATE\" = healthy ]; then
-                echo \"DHIS2 opérationnel après \$((i*10))s.\"
-                sudo docker exec dhis2 curl -sf http://127.0.0.1:8080/api/system/info \
-                  | head -c 400 || true
-                echo ''
-                exit 0
-              fi
-              if [ \"\$STATE\" = unhealthy ]; then
-                echo 'ERREUR : conteneur signalé en échec.' >&2
-                sudo docker compose -f ${_REMOTE_DIR}/docker-compose.yml logs --tail=100 dhis2 >&2
-                exit 1
-              fi
-              sleep 10
-            done
-            echo 'ERREUR : DHIS2 n a pas démarré dans le délai imparti.' >&2
-            sudo docker compose -f ${_REMOTE_DIR}/docker-compose.yml logs --tail=100 dhis2 >&2
-            exit 1"
+          --command "sudo ${_REMOTE_DIR}/scripts/wait-healthy.sh dhis2 600 ${_REMOTE_DIR}/docker-compose.yml"
 
         echo ""
         echo "================================================================"
