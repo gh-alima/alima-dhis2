@@ -82,7 +82,7 @@ construit, jamais `latest` :
 ```bash
 gcloud builds submit \
   --config=cloudbuild-deploy.yaml \
-  --substitutions=_IMAGE_TAG=dev.2.41.4.20260315.a1b2c3d,_ENV=test \
+  --substitutions=_IMAGE_TAG=dev.2.41.9.1.20260814.a1b2c3d \
   --project=alima-dhis2-prod
 ```
 

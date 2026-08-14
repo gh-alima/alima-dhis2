@@ -200,7 +200,7 @@ cat <<EOF
   Le premier déploiement peut maintenant être lancé depuis Cloud Build :
 
     gcloud builds submit --config=cloudbuild-deploy.yaml \\
-      --substitutions=_IMAGE_TAG=<tag>,_ENV=prod \\
+      --substitutions=_IMAGE_TAG=<tag> \\
       --project=alima-dhis2-prod
 
 EOF

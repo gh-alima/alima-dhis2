@@ -5,14 +5,20 @@
 # "latest" : un tag mobile rendrait le retour arrière et l'audit impossibles.
 #
 #   gcloud builds submit --config=cloudbuild-deploy.yaml \
-#     --substitutions=_IMAGE_TAG=dev.2.41.4.20260315.a1b2c3d,_ENV=test \
+#     --substitutions=_IMAGE_TAG=dev.2.41.9.1.20260814.a1b2c3d \
 #     --project=alima-dhis2-prod
 #
+# ⚠ PRODUCTION UNIQUEMENT
+#   Il n'existe pas d'environnement de test hébergé : la validation se fait en
+#   local (docker compose --profile local). Ce pipeline ne déploie donc que sur
+#   la VM de production, et il ne doit être lancé qu'après validation locale du
+#   tag concerné.
+#
 # ⚠ APPROBATION MANUELLE
-#   Le déclencheur de PRODUCTION doit avoir l'approbation manuelle activée
-#   (Cloud Build → Déclencheurs → Approbation requise). Ce contrôle est porté
-#   par le déclencheur et non par ce fichier : personne ne peut le contourner
-#   par un commit.
+#   Le déclencheur doit avoir l'approbation manuelle activée (Cloud Build →
+#   Déclencheurs → Approbation requise). Ce contrôle est porté par le
+#   déclencheur et non par ce fichier : personne ne peut le contourner par un
+#   commit.
 #
 # RETOUR ARRIÈRE
 #   Relancer ce même déploiement avec le tag précédent. Aucune reconstruction,
@@ -21,12 +27,10 @@
 
 substitutions:
   _IMAGE_TAG: ""          # OBLIGATOIRE — tag à déployer
-  _ENV: test              # test | prod
   _AR_HOST: europe-west1-docker.pkg.dev
   _AR_REPO: dhis2-images
   _ZONE: europe-west1-b
-  _VM_TEST: vm-dhis2-test
-  _VM_PROD: vm-dhis2-app
+  _VM: vm-dhis2-app
   _REMOTE_DIR: /opt/alima/dhis2
 
 options:
@@ -48,7 +52,7 @@ steps:
 
         if [ -z "${_IMAGE_TAG}" ]; then
           echo "ERREUR : _IMAGE_TAG est obligatoire." >&2
-          echo "  Exemple : --substitutions=_IMAGE_TAG=dev.2.41.4.20260315.a1b2c3d,_ENV=test" >&2
+          echo "  Exemple : --substitutions=_IMAGE_TAG=dev.2.41.9.1.20260814.a1b2c3d" >&2
           exit 1
         fi
 
@@ -58,12 +62,7 @@ steps:
           exit 1
         fi
 
-        case "${_ENV}" in
-          test) VM="${_VM_TEST}" ;;
-          prod) VM="${_VM_PROD}" ;;
-          *) echo "ERREUR : _ENV doit valoir 'test' ou 'prod' (reçu : ${_ENV})" >&2; exit 1 ;;
-        esac
-        echo "$${VM}" > /workspace/vm.txt
+        echo "${_VM}" > /workspace/vm.txt
 
         # Les deux images doivent exister dans le registre avant qu'on touche
         # à la VM.
@@ -78,7 +77,7 @@ steps:
             }
         done
 
-        echo "Environnement : ${_ENV}  →  VM $${VM}"
+        echo "Cible : PRODUCTION — VM ${_VM}"
         echo "Tag à déployer : ${_IMAGE_TAG}"
 
   # ── 2. Transfert de la configuration sur la VM ─────────────────────────────
@@ -125,7 +124,6 @@ steps:
 
         gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
           --command "sudo ${_REMOTE_DIR}/scripts/render-env.sh \
-                       --env ${_ENV} \
                        --tag ${_IMAGE_TAG} \
                        --registry ${_AR_HOST}/${PROJECT_ID}/${_AR_REPO} \
                        --output ${_REMOTE_DIR}/.env"
@@ -187,7 +185,7 @@ steps:
 
         echo ""
         echo "================================================================"
-        echo " Déploiement terminé — environnement ${_ENV}, tag ${_IMAGE_TAG}"
+        echo " Déploiement terminé en PRODUCTION — tag ${_IMAGE_TAG}"
         echo ""
         echo " Retour arrière : relancer ce déploiement avec le tag précédent."
         echo "================================================================"

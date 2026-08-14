@@ -249,8 +249,7 @@ GitHub `gh-alima/alima-dhis2` :
 | Déclencheur | Événement | Configuration | Approbation |
 |---|---|---|---|
 | `dhis2-build` | Push sur `main` | `cloudbuild.yaml`, filtre d'exclusion `**/*.md` | non |
-| `dhis2-deploy-test` | Manuel | `cloudbuild-deploy.yaml`, `_ENV=test` | non |
-| `dhis2-deploy-prod` | Manuel | `cloudbuild-deploy.yaml`, `_ENV=prod` | **OUI — obligatoire** |
+| `dhis2-deploy-prod` | Manuel | `cloudbuild-deploy.yaml` | **OUI — obligatoire** |
 
 L'approbation manuelle de production se règle dans les paramètres du déclencheur
 (« Exiger une approbation avant l'exécution »). **Ce contrôle vit dans le déclencheur, pas
@@ -272,7 +271,7 @@ La fin du journal affiche le tag produit, par exemple
 
 ```bash
 gcloud builds submit --config=cloudbuild-deploy.yaml \
-  --substitutions=_IMAGE_TAG=<tag>,_ENV=prod \
+  --substitutions=_IMAGE_TAG=<tag> \
   --project=alima-dhis2-prod
 ```
 
@@ -288,14 +287,18 @@ Ces points ne sont pas couverts par `01-setup-gcp.sh` en l'état :
 
 | # | Écart | Quand le traiter |
 |---|---|---|
-| 1 | **La VM de test `vm-dhis2-test` n'est pas créée.** Le script ne provisionne que la VM de production ; `cloudbuild-deploy.yaml` référence pourtant `_ENV=test`. | Avant le premier déploiement en test — dupliquer le bloc VM du script, ou déployer d'abord en production |
-| 2 | **Les secrets `dhis2-test-*` n'existent pas.** `render-env.sh` les attend pour `_ENV=test`. | Idem |
-| 3 | **Enregistrement DNS.** Le domaine doit pointer vers l'IP de la VM avant l'obtention du certificat. | Avant l'étape 8 |
-| 4 | **IP externe de la VM.** La VM est créée sans IP publique : il faut lui en attacher une (statique) pour servir le trafic web entrant. | Avant l'étape 8 |
+| 1 | **IP externe de la VM.** La VM est créée sans IP publique : elle n'est joignable que par IAP. Il faut lui attacher une adresse statique, ou la placer derrière un équilibreur de charge, pour servir le trafic web entrant. | Avant l'étape 8 |
+| 2 | **Enregistrement DNS.** Le domaine doit pointer vers cette adresse avant l'obtention du certificat TLS. | Avant l'étape 8, après le n°1 |
 
-L'écart n°4 est structurant : en l'état la VM n'est joignable que par IAP. Pour servir
-DHIS2 sur Internet il faut soit lui attacher une adresse IP statique, soit la placer
-derrière un équilibreur de charge. À trancher avec ALIMA selon l'exposition souhaitée.
+Ces deux points s'enchaînent : sans adresse publique, pas de DNS ; sans DNS, pas de
+certificat ; sans certificat, Nginx ne démarre pas. Ils se traitent donc **dans cet
+ordre**, une fois l'infrastructure créée et l'exposition souhaitée arbitrée avec ALIMA
+(adresse statique directe ou équilibreur de charge).
+
+> **Pas d'environnement de test hébergé.** C'est une décision assumée pour contenir le
+> coût : la validation se fait en local (`docker compose --profile local`). Le pipeline de
+> déploiement ne cible donc que la production, et aucun tag ne doit y partir sans avoir
+> été démarré en local au préalable.
 
 ---
 

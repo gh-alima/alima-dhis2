@@ -6,40 +6,39 @@
 # VM avec son propre compte de service : ils ne transitent jamais par Cloud
 # Build ni par le dépôt.
 #
+# Il n'existe qu'un seul environnement hébergé — la production. La validation
+# se fait en local (docker compose --profile local), avec un .env rédigé à la
+# main depuis docker/.env.example.
+#
 # Usage :
-#   render-env.sh --env prod --tag <image-tag> --registry <host/projet/dépôt> \
+#   render-env.sh --tag <image-tag> --registry <host/projet/dépôt> \
 #                 --output /opt/alima/dhis2/.env
 # =============================================================================
 set -euo pipefail
 
-ENVIRONMENT=""
 IMAGE_TAG=""
 REGISTRY=""
 OUTPUT="/opt/alima/dhis2/.env"
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --env)      ENVIRONMENT="$2"; shift 2 ;;
     --tag)      IMAGE_TAG="$2";   shift 2 ;;
     --registry) REGISTRY="$2";    shift 2 ;;
     --output)   OUTPUT="$2";      shift 2 ;;
+    # Accepté et ignoré : conserve la compatibilité avec d'anciens appels.
+    --env)      shift 2 ;;
     *) echo "Paramètre inconnu : $1" >&2; exit 1 ;;
   esac
 done
 
-for _v in ENVIRONMENT IMAGE_TAG REGISTRY; do
-  if [ -z "$(eval "echo \${${_v}}")" ]; then
-    echo "ERREUR : --${_v,,} est obligatoire." >&2
-    exit 1
-  fi
-done
-
-# Préfixe des secrets selon l'environnement
-case "${ENVIRONMENT}" in
-  prod) SECRET_PREFIX="dhis2" ;;
-  test) SECRET_PREFIX="dhis2-test" ;;
-  *) echo "ERREUR : --env doit valoir 'test' ou 'prod'." >&2; exit 1 ;;
-esac
+if [ -z "${IMAGE_TAG}" ]; then
+  echo "ERREUR : --tag est obligatoire." >&2
+  exit 1
+fi
+if [ -z "${REGISTRY}" ]; then
+  echo "ERREUR : --registry est obligatoire." >&2
+  exit 1
+fi
 
 secret() {
   gcloud secrets versions access latest --secret="$1" 2>/dev/null || {
@@ -48,13 +47,13 @@ secret() {
   }
 }
 
-echo "Génération de ${OUTPUT} (environnement ${ENVIRONMENT}, tag ${IMAGE_TAG})"
+echo "Génération de ${OUTPUT} (production, tag ${IMAGE_TAG})"
 
-DB_HOST="$(secret "${SECRET_PREFIX}-db-host")"
-DB_USER="$(secret "${SECRET_PREFIX}-db-user")"
-DB_PASSWORD="$(secret "${SECRET_PREFIX}-db-password")"
-ENCRYPTION_PASSWORD="$(secret "${SECRET_PREFIX}-encryption-password")"
-FQDN="$(secret "${SECRET_PREFIX}-fqdn")"
+DB_HOST="$(secret dhis2-db-host)"
+DB_USER="$(secret dhis2-db-user)"
+DB_PASSWORD="$(secret dhis2-db-password)"
+ENCRYPTION_PASSWORD="$(secret dhis2-encryption-password)"
+FQDN="$(secret dhis2-fqdn)"
 
 # Le fichier contient des secrets en clair : permissions restreintes AVANT
 # d'écrire quoi que ce soit dedans.
@@ -65,7 +64,7 @@ trap 'rm -f "${TMP}"' EXIT
 cat > "${TMP}" <<EOF
 # Fichier généré par render-env.sh le $(date -u +%Y-%m-%dT%H:%M:%SZ)
 # NE PAS MODIFIER À LA MAIN — régénéré à chaque déploiement.
-# Environnement : ${ENVIRONMENT}
+# Environnement : production
 
 REGISTRY=${REGISTRY}
 IMAGE_TAG=${IMAGE_TAG}

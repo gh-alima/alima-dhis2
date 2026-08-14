@@ -121,9 +121,9 @@ steps:
         echo ""
         echo " Tag à déployer : $${TAG}"
         echo ""
-        echo " Déploiement en test :"
+        echo " Déploiement en production (après validation locale) :"
         echo "   gcloud builds submit --config=cloudbuild-deploy.yaml \\"
-        echo "     --substitutions=_IMAGE_TAG=$${TAG},_ENV=test"
+        echo "     --substitutions=_IMAGE_TAG=$${TAG}"
         echo "================================================================"
 
 timeout: 2400s

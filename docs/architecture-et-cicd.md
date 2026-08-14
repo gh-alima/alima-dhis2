@@ -409,7 +409,7 @@ Organisation dans Secret Manager :
 dhis2-db-password            mot de passe BDD production
 dhis2-db-user                utilisateur BDD production
 dhis2-encryption-password    clé de chiffrement
-dhis2-test-db-password       équivalents pour l'environnement de test
+dhis2-fqdn                   URL publique de l'instance
 ```
 
 Le dépôt ne contient que des **modèles** : `dhis.conf.template` (référence complète des
@@ -472,10 +472,11 @@ deviennent impossibles.
 ### 7.3 Déploiement
 
 ```
-Déclenchement manuel avec _IMAGE_TAG
+[LOCAL]  docker compose --profile local up
+         validation du tag : démarrage, migrations, parcours fonctionnels
    │
    ▼
-[TEST]  déploiement automatique ──▶ validation fonctionnelle
+Déclenchement manuel avec _IMAGE_TAG
    │
    ▼
 [APPROBATION MANUELLE]  ← référent ALIMA ou consultant selon la phase
@@ -483,15 +484,19 @@ Déclenchement manuel avec _IMAGE_TAG
    ▼
 [PRODUCTION]  mise à jour du tag dans .env sur la VM
               docker compose pull && docker compose up -d
-              attente du démarrage, vérification /api/system/info
+              attente du démarrage, sonde /dhis-web-login/
 ```
 
 L'approbation manuelle est portée par le **trigger Cloud Build** de production, pas par
 le contenu du dépôt : personne ne peut la contourner par un commit.
 
 Chaque étape de déploiement est **idempotente** et se termine par une vérification
-active — on n'annonce un déploiement réussi qu'après avoir obtenu une réponse de
-`/api/system/info` sur la nouvelle version.
+active — on n'annonce un déploiement réussi qu'après que le conteneur soit passé à l'état
+`healthy`.
+
+> **Conséquence de l'absence d'environnement de test hébergé** (§8) : la validation d'un
+> tag repose entièrement sur l'exécution locale. Un tag ne doit jamais être déployé sans
+> avoir été démarré en local au préalable — c'est la seule barrière avant la production.
 
 ### 7.4 Retour arrière
 
@@ -507,19 +512,38 @@ arrière ne soit jamais purgé.
 
 ## 8. Environnements
 
-| | Test | Production |
-|---|---|---|
-| Déploiement | automatique après construction | **approbation manuelle obligatoire** |
-| Base de données | Cloud SQL, instance de test | Cloud SQL `pg16-dhis2-prod` |
-| `DHIS2_FQDN` | URL de test | URL de production ALIMA |
-| Secrets | `dhis2-test-*` | `dhis2-*` |
-| Supervision | activée | activée |
-| Sauvegardes | non | automatiques + PITR |
+**Un seul environnement est hébergé : la production.** Il n'y a pas d'instance de test
+sur GCP — décision assumée pour contenir le coût. La validation se fait localement.
 
-**Ce qui change entre les deux : uniquement des variables d'environnement et des
-références de secrets.** L'image, le `docker-compose.yml` et le `nginx.conf` sont
-identiques. Si un correctif nécessite de modifier autre chose qu'une variable, c'est le
-signe que quelque chose a été figé au mauvais endroit.
+| | Local | Production |
+|---|---|---|
+| Hébergement | poste du consultant, `docker compose --profile local` | VM `vm-dhis2-app` |
+| Déploiement | `up --build` | **approbation manuelle obligatoire** |
+| Base de données | conteneur PostgreSQL 16 + PostGIS | Cloud SQL `pg16-dhis2-prod` |
+| `DHIS2_FQDN` | `http://localhost:8080` | URL de production ALIMA |
+| Configuration | `.env` écrit à la main depuis `.env.example` | `.env` généré depuis Secret Manager |
+| TLS | désactivé (`INSECURE=true`) | Nginx + Let's Encrypt |
+| Nginx | non démarré | démarré |
+| Sauvegardes | aucune | Cloud SQL auto + PITR, magasin de fichiers hebdo, snapshots |
+
+**Ce qui change entre les deux : des variables d'environnement, et l'origine des
+secrets.** L'image et le `docker-compose.yml` sont les mêmes fichiers. Si un correctif
+nécessite de modifier autre chose qu'une variable, c'est le signe que quelque chose a été
+figé au mauvais endroit.
+
+### 8.1 Ce que l'absence d'environnement de test implique
+
+Trois conséquences à assumer :
+
+1. **La validation locale est la seule barrière avant la production.** Aucun tag ne doit
+   partir en production sans avoir démarré en local — migrations comprises.
+2. **Le local ne reproduit pas tout.** Cloud SQL, l'IP privée, Nginx avec TLS, l'agent
+   Ops et l'approbation Cloud Build ne sont exercés qu'en production. Le premier
+   déploiement réel reste donc le premier test grandeur nature de ces éléments.
+3. **La recette utilisateur (S3) n'a pas de plateforme.** Faire tester l'application par
+   les référents ALIMA depuis un poste de développement n'est pas praticable. Piste à
+   arbitrer le moment venu : créer une instance temporaire pour la seule semaine de
+   recette, puis la supprimer — le coût reste borné à cette période.
 
 ---
 
@@ -681,7 +705,7 @@ Docker de référence DHIS2 laisse d'ailleurs ce montage commenté.
 |---|---|---|---|
 | 1 | Volumétrie actuelle du répertoire `files/` sur l'instance 2.35 ? | Dimensionnement du disque de la VM et durée de la copie à la bascule | **À relever pendant l'audit S1** — élément bloquant pour le dimensionnement |
 | 2 | SSO OpenID à activer ? Sur quel annuaire ? | Prévoir le bloc et le secret dès la conception, même désactivé | Prévoir le bloc, `DHIS2_SSO_OPENID_ACTIVATED=false` au départ |
-| 3 | L'environnement de test est-il permanent ou éphémère ? | Coût mensuel, disponibilité pour les recettes | Permanent pendant les 4 semaines, décision à revoir ensuite |
+| 3 | Sur quelle plateforme se fera la recette utilisateur (S3) ? | Sans environnement hébergé, les référents ALIMA n'ont rien à tester | Instance temporaire créée pour la seule semaine de recette, puis supprimée — coût borné à cette période |
 | 4 | Rétention Artifact Registry compatible avec la fenêtre de retour arrière ? | Un tag purgé = retour arrière impossible | Vérifier que les 5 versions conservées couvrent le besoin post-bascule |
 | 5 | `CLAUDE.md` versionné ou ignoré ? | Cohérence de la documentation d'équipe | Versionné — il fait partie de la documentation du dépôt |
 | 6 | Qui approuve les déploiements en production, et à partir de quelle phase ? | Chaîne de responsabilité au Go-Live | Consultant jusqu'à la bascule, référent ALIMA ensuite |
@@ -720,7 +744,12 @@ de référence publié par l'équipe DHIS2 :
 3. Rédaction de `docs/variables-environnement.md` — taxonomie exhaustive des variables
    `DHIS2_*`, avec valeur par défaut, propriété `dhis.conf` correspondante et caractère
    sensible ou non.
-4. Création du squelette du dépôt conformément au §10.
-5. Construction de la première image 2.35 (palier de départ) et validation de la chaîne
-   de bout en bout sur l'environnement de test — **y compris la persistance** : redémarrer
-   la pile et vérifier que fichiers et journaux survivent au remplacement du conteneur.
+4. Création du squelette du dépôt conformément au §10. — **fait**
+5. Construction de l'image 2.41.9.1 et validation locale de bout en bout, persistance
+   comprise. — **fait** : `server.xml` compatible Tomcat 9.0.111, `curl` présent dans
+   l'image, magasin de fichiers et journaux survivent au remplacement du conteneur,
+   aucune migration rejouée.
+6. Provisionnement de l'infrastructure GCP — voir
+   [`provisionnement-gcp.md`](provisionnement-gcp.md).
+7. Construction de l'image 2.35.14 (palier de départ) et validation locale du premier
+   saut de migration sur une copie de la base ALIMA.
