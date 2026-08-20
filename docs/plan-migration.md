@@ -794,6 +794,60 @@ difficulte, le retour arriere consiste a ne pas basculer le DNS — rien a defai
 
 ---
 
+## Le cache navigateur, angle mort de la bascule
+
+Constate le 20 aout 2026 sur la 2.41 migree : les tableaux de bord refusaient de
+s'afficher.
+
+```
+Refused to apply style from '.../dhis-web-data-visualizer/assets/index-Dmx4sX17.css'
+because its MIME type ('text/html') is not a supported stylesheet MIME type
+```
+
+**Le serveur n'y etait pour rien** : le fichier existe bien dans l'image, et `index.html`
+comme `plugin.html` le referencent correctement. L'onglet reseau a designe la vraie cause
+— les requetes en 404 etaient emises par `service-worker.js`, et les scripts servis
+venaient de son cache, non du serveur.
+
+Les applications DHIS2 enregistrent un **service worker** qui met en cache leurs assets. Un
+service worker survit au changement de version : il continue de servir l'application
+precedente et de reclamer des fichiers qui n'existent plus.
+
+### Remede
+
+DHIS2 embarque une application faite pour cela :
+
+```
+https://<hote>/dhis-web-cache-cleaner/index.html
+```
+
+A defaut, dans les outils de developpement : *Application -> Service Workers -> Unregister*,
+puis *Storage -> Clear site data*. **Un rechargement force ne suffit pas** — il ne desinscrit
+pas le service worker.
+
+### Consequence pour le Go-Live
+
+Le jour ou `dhis2.alima.ngo` passera de la 2.35 a la 2.41, **chaque navigateur ayant utilise
+l'ancienne instance portera un service worker enregistre par la 2.35**. Les utilisateurs
+verront des tableaux de bord vides ou des erreurs de chargement, sur un serveur pourtant
+sain — et signaleront un incident de migration qui n'en est pas un.
+
+A prevoir dans le plan de bascule :
+
+1. **Prevenir avant** — un message aux utilisateurs, avec le lien du vide-cache et la
+   marche a suivre en trois lignes. Le faire avant la bascule, pas apres les premiers
+   appels.
+2. **Armer le support** — que la premiere reponse a « ca ne marche pas » soit le lien du
+   vide-cache, avant tout diagnostic serveur.
+3. **Le verifier soi-meme** — tester la bascule dans un navigateur ayant reellement utilise
+   la 2.35, pas seulement en navigation privee, qui masque precisement ce probleme.
+
+> C'est le genre d'incident qui se paie cher le jour J : il touche tous les utilisateurs a
+> la fois, ressemble a une panne serveur, et se corrige en dix secondes une fois la cause
+> connue.
+
+---
+
 ## Points de vigilance
 
 Ce que la repetition du 20 aout 2026 a reellement appris.
