@@ -71,6 +71,19 @@ RUN chmod +x /usr/local/bin/init.sh /usr/local/bin/wait-for-it.sh \
         /usr/local/tomcat/temp \
         /usr/local/tomcat/webapps
 
+# Outils requis par les etapes suivantes. Aucun n'est garanti present : les
+# images de la ligne DHIS2 varient d'une version a l'autre. Releve :
+#   2.35.14  ni curl ni wget ni nc ; unzip present
+#   2.37.10  unzip absent egalement
+# D'ou une installation conditionnelle plutot qu'une hypothese.
+#
+#   unzip  deplie ROOT.war a la construction (voir l'etape suivante)
+#   curl   sonde de disponibilite ; sans lui le conteneur reste indefiniment
+#          "health: starting" alors que DHIS2 tourne
+#
+# L'image cible 2.41 embarque curl : seuls les paliers ont besoin de ceci.
+RUN if ! command -v unzip >/dev/null || ! command -v curl >/dev/null; then       apt-get update    && apt-get install -y --no-install-recommends unzip curl    && rm -rf /var/lib/apt/lists/*;     fi  && unzip -v > /dev/null  && curl --version | head -1
+
 # Palier de migration : deplier l'archive a la construction.
 #
 # L'image livre ROOT.war ET un repertoire webapps/ROOT vide. Tomcat y voit un
@@ -89,12 +102,6 @@ RUN cd /usr/local/tomcat/webapps \
  && rm -f ../ROOT.war \
  && ls WEB-INF/lib/dhis-service-setting-*.jar \
  && chown -R 1000:1000 /usr/local/tomcat/webapps
-
-# curl, requis par la sonde de disponibilite : les images anciennes n'en
-# livrent pas (ni wget, ni nc). Sans lui la sonde echoue toujours, et le
-# conteneur reste indefiniment "health: starting" alors que DHIS2 tourne.
-# L'image cible 2.41, elle, embarque curl.
-RUN apt-get update  && apt-get install -y --no-install-recommends curl  && rm -rf /var/lib/apt/lists/*  && curl --version | head -1
 
 # Connecteur AJP : inutilise - Nginx parle HTTP - et refuse par Tomcat 8.5
 # faute de secret, ce qui produit un SEVERE a chaque demarrage. Le retirer
