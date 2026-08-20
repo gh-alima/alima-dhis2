@@ -1,0 +1,26 @@
+# =============================================================================
+# docker-compose.override.yml - surcharge du palier de migration
+#
+# Charge AUTOMATIQUEMENT par Compose - aucune option -f a passer. Ce fichier
+# n'existe que sur les branches migration/* ; sur main il est absent, et le
+# pipeline efface celui qui subsisterait sur la VM.
+#
+# Un palier fait migrer le schema et ne recoit aucun trafic. Deux reglages de
+# production l'empechent de demarrer :
+#
+#   read_only    Tomcat decompresse desormais ROOT.war dans webapps/, ce qu'une
+#                racine en lecture seule interdit. La cible 2.41 n'a pas ce
+#                besoin : son image livre l'application deja depliee.
+#
+#   healthcheck  /dhis-web-login/ n'existe pas dans les versions anciennes. La
+#                sonde echouait sur un DHIS2 pourtant fonctionnel, et Nginx
+#                refusait de demarrer derriere une dependance non saine.
+# =============================================================================
+
+services:
+  dhis2:
+    read_only: false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/system/info"]
+      # Decompression du WAR puis migrations Flyway : compter large.
+      start_period: 1200s
