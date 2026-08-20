@@ -85,6 +85,29 @@ alias dhis2ctl='sudo /opt/alima/dhis2/scripts/dhis2ctl.sh'
 — démarrage de Tomcat, erreurs fatales. `applog` donne ce que DHIS2 écrit réellement dans
 `dhis.log`, `dhis-audit.log` et les autres. Pour un problème fonctionnel, c'est `applog`.
 
+### Mettre à jour les scripts sans déployer
+
+Le pipeline dépose les scripts sur la VM à chaque déploiement. Pour les rafraîchir seuls —
+mise au point, opération ponctuelle — depuis la racine du dépôt :
+
+```bash
+gcloud compute scp --recurse scripts vm-dhis2-app:~ \
+  --zone=europe-west1-b --tunnel-through-iap --project=alima-dhis2-prod \
+&& gcloud compute ssh vm-dhis2-app --zone=europe-west1-b --tunnel-through-iap \
+  --project=alima-dhis2-prod \
+  --command "sudo rm -rf /opt/alima/dhis2/scripts \
+    && sudo cp -r ~/scripts /opt/alima/dhis2/scripts \
+    && sudo chmod +x /opt/alima/dhis2/scripts/*.sh \
+    && ls -l /opt/alima/dhis2/scripts"
+```
+
+Le répertoire est **remplacé**, pas fusionné : un script retiré du dépôt disparaît de la
+VM, sans quoi une version obsolète y survivrait.
+
+> Ce raccourci ne remplace pas un déploiement. Le prochain déploiement réécrira ces
+> fichiers depuis la branche construite — toute correction doit donc aussi être commitée,
+> sans quoi elle sera perdue.
+
 ---
 
 ## 3. Déployer une version

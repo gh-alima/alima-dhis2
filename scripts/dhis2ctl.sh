@@ -146,6 +146,34 @@ cmd_disk() {
   docker images --format '  {{.Repository}}:{{.Tag}}  {{.Size}}' | grep dhis2 || true
 }
 
+cmd_progress() {
+  # Un import ou une migration Flyway n'affiche rien pendant des heures : psql
+  # reste muet durant les blocs COPY, et Flyway ne journalise qu'en fin d'étape.
+  # Suivre la taille de la base est le seul signe de vie fiable.
+  set -a; . "${APP_DIR}/.env"; set +a
+  INTERVALLE="${INTERVALLE:-300}"
+  titre "Progression — relevé toutes les ${INTERVALLE}s, Ctrl+C pour quitter"
+
+  _interroger() {
+    docker run --rm -e PGPASSWORD="${DHIS2_DATABASE_PASSWORD}" \
+      postgres:16-alpine \
+      psql -h "${DHIS2_DATABASE_HOST}" -U "${DHIS2_DATABASE_USER}" \
+           -d "${DHIS2_DATABASE_NAME}" -tAc "$1" 2>/dev/null | tr -d '[:space:]'
+  }
+
+  PRECEDENT=""
+  while true; do
+    TAILLE=$(_interroger "SELECT pg_size_pretty(pg_database_size(current_database()));")
+    TABLES=$(_interroger "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';")
+    MARQUE=""
+    [ -n "${PRECEDENT}" ] && [ "${TAILLE}" = "${PRECEDENT}" ] && MARQUE="  (inchangé)"
+    printf '  %s  %-12s %-5s tables%s\n' \
+      "$(date -u +%H:%M:%S)" "${TAILLE:-?}" "${TABLES:-?}" "${MARQUE}"
+    PRECEDENT="${TAILLE}"
+    sleep "${INTERVALLE}"
+  done
+}
+
 cmd_db() {
   # Ouvre une session psql sur Cloud SQL. Le mot de passe est lu depuis .env et
   # transmis par l'environnement, jamais en argument : il apparaîtrait sinon
@@ -192,6 +220,9 @@ usage() {
   JOURNAUX
     logs [service]      sortie du conteneur (dhis2 par défaut), en continu
     applog [fichier]    journaux applicatifs DHIS2 (dhis.log par défaut)
+    progress            taille de la base et nombre de tables, en continu
+                        — pour suivre un import ou une migration Flyway,
+                          qui n'affichent rien pendant des heures
 
   CYCLE DE VIE                       ⚠ interrompent le service
     start               démarre la pile
@@ -203,6 +234,7 @@ usage() {
     backup              sauvegarde du magasin de fichiers vers Cloud Storage
 
   Variables : ASSUME_YES=1 pour ne pas demander confirmation.
+              INTERVALLE=60 pour changer la cadence de « progress ».
 
   Le déploiement d'une nouvelle version ne se fait PAS ici : il passe par
   Cloud Build, avec approbation. Voir docs/aide-memoire.md.
@@ -225,6 +257,7 @@ case "${COMMANDE}" in
   cert)     besoin_root; cmd_cert ;;
   disk)     besoin_root; cmd_disk ;;
   db)       besoin_root; cmd_db ;;
+  progress) besoin_root; cmd_progress ;;
   backup)   besoin_root; cmd_backup ;;
   info)     besoin_root; cmd_info ;;
   ""|-h|--help|help) usage ;;
