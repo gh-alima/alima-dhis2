@@ -50,6 +50,37 @@ Ajouter un palier si besoin :
 ./scripts/create-migration-branch.sh 2.36.13.2
 ```
 
+### Images publiées
+
+Construites le 20 août 2026, dans
+`europe-west1-docker.pkg.dev/alima-dhis2-prod/dhis2-images/dhis2-core` :
+
+| Palier | Tag | Taille |
+|---|---|---|
+| 2.35.14 | `2.35.14.20260820.01.2a73704` | 740 Mo |
+| 2.36.13.2 | `2.36.13.2.20260820.01.b93b81d` | 781 Mo |
+| 2.37.10.0 | `2.37.10.0.20260820.01.225422a` | 746 Mo |
+| 2.38.7.0 | `2.38.7.0.20260820.01.c947c42` | 713 Mo |
+| 2.39.10.1 | `2.39.10.1.20260820.01.fd92b5f` | 712 Mo |
+| 2.40.12.0 | `2.40.12.0.20260820.01.56df7c4` | 801 Mo |
+| **2.41.9.1** (cible) | `2.41.9.1.20260820.01.0f45d7d` | 781 Mo |
+
+> ⚠ **Ces tags peuvent disparaître avant la fin de la migration.** La politique de
+> nettoyage du registre conserve les 10 versions les plus récentes et purge au-delà de
+> 30 jours. Si la migration s'étale, un palier ancien peut sortir des deux critères et
+> être supprimé.
+>
+> Ce n'est pas une perte : chaque palier se reconstruit à l'identique depuis sa branche,
+> en deux minutes. Mais mieux vaut **vérifier la présence du tag avant chaque palier** que
+> de le découvrir au déploiement.
+>
+> Pour les figer, ajouter une règle de conservation sur les tags de palier :
+>
+> ```bash
+> gcloud artifacts docker tags list \
+>   europe-west1-docker.pkg.dev/alima-dhis2-prod/dhis2-images/dhis2-core
+> ```
+
 ---
 
 ## Quel chemin suivre
