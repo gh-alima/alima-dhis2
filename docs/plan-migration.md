@@ -142,22 +142,29 @@ instructions de structure :
 Deux conséquences favorables : les extensions se créent d'elles-mêmes à l'import, et
 l'absence de propriétaires évite d'avoir à recréer des rôles inexistants sur Cloud SQL.
 
-> ⚠ **La volumétrie dépasse largement l'estimation initiale.** Le cadrage annonçait une
-> base d'environ 50 Go ; l'export compressé en fait 25, ce qui représente couramment cinq
-> à dix fois plus une fois décompressé. Trois points en découlent, à traiter avant de
-> lancer l'import :
->
-> - **Stockage Cloud SQL** — l'instance est provisionnée à 100 Go. L'extension
->   automatique est active, donc l'import n'échouera pas, mais le disque grandira sans
->   jamais rétrécir, et la facture avec lui.
-> - **Durée** — un export au format SQL texte se rejoue séquentiellement, sans
->   parallélisme. Sur ce volume, l'import se compte en heures, pas en minutes.
-> - **Fenêtre de bascule** — la durée annoncée à ALIMA découlera de ces mesures. Ne rien
->   avancer avant le premier import chronométré.
->
-> Si un nouvel export peut être demandé, le réclamer au **format `custom`**
-> (`pg_dump -Fc`) : `pg_restore -j` le rejoue alors en parallèle, souvent plusieurs fois
-> plus vite.
+### Mesures relevées à l'import — 20 août 2026
+
+| Mesure | Valeur |
+|---|---|
+| Durée de l'import | **26 min 53 s** |
+| Taille de la base restaurée | **31 Go** |
+| Tables | 457 |
+| Extensions présentes après import | `plpgsql`, `postgis` |
+
+Ces chiffres remplacent l'estimation initiale, qui les surévaluait nettement. Trois
+conséquences, toutes favorables :
+
+- **Le stockage suffit.** 31 Go sur les 100 Go provisionnés. Pas de redimensionnement à
+  prévoir avant de connaître la taille des tables analytiques, qui s'ajouteront.
+- **La durée est maîtrisable.** Vingt-sept minutes, et non les heures redoutées pour un
+  export au format SQL texte. Demander un export au format `custom` n'est plus utile.
+- **La fenêtre de bascule** peut s'appuyer sur une mesure réelle : l'import n'en
+  représentera qu'une demi-heure.
+
+> ⚠ **Le point de vigilance se déplace vers les tables analytiques.** Sur une instance
+> DHIS2, elles atteignent couramment la taille des données sources, parfois davantage.
+> Relever la taille de la base après le premier `analyticsTableUpdate` : c'est cette
+> valeur, et non les 31 Go, qui déterminera le dimensionnement définitif du disque.
 
 ### 3. Téléverser l'export vers Cloud Storage
 
