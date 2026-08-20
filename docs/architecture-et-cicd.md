@@ -736,8 +736,8 @@ Deux validations conditionnent le Go-Live et sont propres à ALIMA :
     ├── architecture-et-cicd.md   ce document
     ├── aide-memoire.md           commandes du quotidien
     ├── provisionnement-gcp.md    mode opératoire pas à pas de l'infrastructure
-    ├── variables-environnement.md  taxonomie complète des variables DHIS2_* — à rédiger
-    └── plan-migration.md         déroulé des paliers et bascule — à rédiger
+    ├── plan-migration.md        déroulé des paliers et bascule
+    └── variables-environnement.md  taxonomie des variables DHIS2_* — à rédiger
 ```
 
 **Toutes les commandes distantes du pipeline sont des scripts déposés sur la VM**, jamais
