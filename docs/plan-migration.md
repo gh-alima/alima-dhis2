@@ -29,15 +29,20 @@ Une branche par ligne de version, épinglée sur son **dernier correctif publié
 diffèrent de `main` que par deux lignes du `Dockerfile` : la version de l'image de base et
 la neutralisation de `server.xml`.
 
-| Branche | Version | Java |
+| Branche | Version | Tomcat / Java |
 |---|---|---|
-| `migration/2.35.14` | 2.35.14 | 11 |
-| `migration/2.36.13.2` | 2.36.13.2 | 11 |
-| `migration/2.37.10.0` | 2.37.10.0 | 11 |
-| `migration/2.38.7.0` | 2.38.7.0 | 11 |
-| `migration/2.39.10.1` | 2.39.10.1 | 11 / 17 |
-| `migration/2.40.12.0` | 2.40.12.0 | 17 |
-| **`main`** | **2.41.9.1** | **17** — cible, `server.xml` actif |
+| `migration/2.35.14` | 2.35.14 | **Tomcat 8.5.79 / Java 8** — constaté |
+| `migration/2.36.13.2` | 2.36.13.2 | à constater au démarrage |
+| `migration/2.37.10.0` | 2.37.10.0 | à constater au démarrage |
+| `migration/2.38.7.0` | 2.38.7.0 | à constater au démarrage |
+| `migration/2.39.10.1` | 2.39.10.1 | à constater au démarrage |
+| `migration/2.40.12.0` | 2.40.12.0 | à constater au démarrage |
+| **`main`** | **2.41.9.1** | **Tomcat 9.0.111 / Java 17** — cible, `server.xml` actif |
+
+> La colonne est informative : `server.xml` étant neutralisé sur tous les paliers, la
+> version de Tomcat embarquée n'impose aucune adaptation. Le premier palier a révélé
+> **Java 8**, là où une lecture rapide de la documentation laissait attendre Java 11 —
+> raison de plus pour relever ce que chaque image annonce plutôt que de le supposer.
 
 > `2.35.0`, la version en production chez ALIMA, **n'a pas d'image officielle** : la ligne
 > 2.35 ne publie qu'à partir de `2.35.9`. Le premier palier démarre donc sur `2.35.14`, ce

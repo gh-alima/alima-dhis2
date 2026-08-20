@@ -119,15 +119,15 @@ La montée de 2.35 à 2.41 se fait version par version, chacune appliquant ses p
 migrations de schéma. Une branche par palier, épinglée sur le dernier correctif publié de
 sa ligne :
 
-| Branche | Version | Java |
-|---|---|---|
-| `migration/2.35.14` | 2.35.14 | 11 |
-| `migration/2.36.13.2` | 2.36.13.2 | 11 |
-| `migration/2.37.10.0` | 2.37.10.0 | 11 |
-| `migration/2.38.7.0` | 2.38.7.0 | 11 |
-| `migration/2.39.10.1` | 2.39.10.1 | 11 / 17 |
-| `migration/2.40.12.0` | 2.40.12.0 | 17 |
-| **`main`** | **2.41.9.1** | 17 — cible |
+| Branche | Version |
+|---|---|
+| `migration/2.35.14` | 2.35.14 |
+| `migration/2.36.13.2` | 2.36.13.2 |
+| `migration/2.37.10.0` | 2.37.10.0 |
+| `migration/2.38.7.0` | 2.38.7.0 |
+| `migration/2.39.10.1` | 2.39.10.1 |
+| `migration/2.40.12.0` | 2.40.12.0 |
+| **`main`** | **2.41.9.1** — cible |
 
 **Les images de tous les paliers sont construites et publiées** dans Artifact Registry.
 Les lister :
