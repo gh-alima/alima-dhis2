@@ -459,6 +459,41 @@ OAuth ou passerelle SMS eventuellement chiffree.
 
 ---
 
+### Palier 2 — 2.36.13.2, 20 aout 2026
+
+Migrations les plus lourdes de cette version :
+
+- `V2_36_11__Migrate_sharings_to_jsonb` — bascule de tout le partage (attributs, roles,
+  groupes, elements de donnees, programmes, tableaux de bord...) vers une colonne `jsonb`
+- migrations `name => shortname`, qui renseignent les noms courts manquants
+
+Les `WARN ... already exists, skipping` sont attendus : Flyway retrouve des objets deja
+presents et poursuit.
+
+#### A verifier sur la cible 2.41 — taille du pool de connexions
+
+```
+2.35.14  Hibernate configuration loaded: ... connection pool max size: 40
+2.36.13  Hibernate configuration loaded: ... connection pool max size: null
+```
+
+`init.sh` ecrit pourtant `connection.pool.max_size = 40` et `db.pool.type = hikari`. La
+2.35 utilisait c3p0 et lisait cette valeur ; a partir de la 2.36 DHIS2 passe sur Hikari, et
+cette ligne de journal interroge une clef propre a l'ancien pool.
+
+Sans consequence sur un palier, qui ne recoit aucun trafic. **Mais a controler au
+demarrage de la 2.41** : si la taille du pool n'est pas appliquee, DHIS2 retombe sur sa
+valeur par defaut, ce qui se paie en charge reelle. Verification :
+
+```bash
+sudo /opt/alima/dhis2/scripts/dhis2ctl.sh applog dhis.log | grep -i "pool"
+```
+
+Si la valeur reste `null` en 2.41, chercher la clef attendue par Hikari dans la
+documentation de la version et adapter `docker/init.sh`.
+
+---
+
 ## Ce qu'il faut mesurer en chemin
 
 Ces chiffres déterminent la fenêtre de bascule. Les relever palier par palier :
