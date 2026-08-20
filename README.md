@@ -18,7 +18,7 @@ co-localisé à Cloud SQL PostgreSQL 16 managé.
 | Travailler en local sur l'image ou la configuration | [Démarrage local](#démarrage-local) |
 | Comprendre un choix technique avant de le modifier | [`docs/architecture-et-cicd.md`](docs/architecture-et-cicd.md) |
 | Recréer l'infrastructure | [`docs/provisionnement-gcp.md`](docs/provisionnement-gcp.md) |
-| Faire monter la base de 2.35 à 2.41 | [`docs/plan-migration.md`](docs/plan-migration.md) |
+| Faire monter la base de 2.35 à 2.41 | [Migration par paliers](#migration-par-paliers), puis [`docs/plan-migration.md`](docs/plan-migration.md) |
 
 **Une règle vaut d'être connue avant tout le reste** : les commandes `gcloud` se lancent
 depuis un poste de travail, jamais depuis la VM. Le compte de service de la VM est
@@ -109,6 +109,54 @@ docker build -f docker/nginx/Dockerfile -t dhis2-nginx:local docker/nginx
 
 En CI, `cloudbuild.yaml` fait la même chose et pousse dans Artifact Registry avec le tag
 `<version-dhis2>.<date>.<n° du jour>.<commit>` — par exemple `2.41.9.1.20260814.01.556073b`.
+
+---
+
+## Migration par paliers
+
+La montée de 2.35 à 2.41 se fait version par version, chacune appliquant ses propres
+migrations de schéma. Une branche par palier, épinglée sur le dernier correctif publié de
+sa ligne :
+
+| Branche | Version | Java |
+|---|---|---|
+| `migration/2.35.14` | 2.35.14 | 11 |
+| `migration/2.36.13.2` | 2.36.13.2 | 11 |
+| `migration/2.37.10.0` | 2.37.10.0 | 11 |
+| `migration/2.38.7.0` | 2.38.7.0 | 11 |
+| `migration/2.39.10.1` | 2.39.10.1 | 11 / 17 |
+| `migration/2.40.12.0` | 2.40.12.0 | 17 |
+| **`main`** | **2.41.9.1** | 17 — cible |
+
+**Les images de tous les paliers sont construites et publiées** dans Artifact Registry.
+Les lister :
+
+```bash
+gcloud artifacts docker images list \
+  europe-west1-docker.pkg.dev/alima-dhis2-prod/dhis2-images/dhis2-core \
+  --include-tags --project=alima-dhis2-prod
+```
+
+Reconstruire un palier, ou en ajouter un :
+
+```bash
+git checkout migration/2.38.7.0
+gcloud builds submit --config=cloudbuild.yaml \
+  --substitutions=_VCS_REF=$(git rev-parse --short HEAD) \
+  --project=alima-dhis2-prod
+
+# Créer la branche d'une version absente de la liste
+./scripts/create-migration-branch.sh 2.36.13.2
+```
+
+Une branche de palier ne diffère de `main` que par deux lignes du `Dockerfile` : la version
+de l'image de base, et la neutralisation de `server.xml` — inutile sur un palier, qui ne
+reçoit aucun trafic.
+
+Le déclencheur automatique ne réagit qu'aux poussées sur `main` : les branches de palier
+se construisent à la demande, sans jamais interférer avec la production.
+
+Déroulé complet : [`docs/plan-migration.md`](docs/plan-migration.md).
 
 ---
 
