@@ -815,15 +815,18 @@ precedente et de reclamer des fichiers qui n'existent plus.
 
 ### Remede
 
-DHIS2 embarque une application faite pour cela :
+**L'application `dhis-web-cache-cleaner` embarquee par DHIS2 ne suffit pas** — essaye le
+20 aout 2026, sans effet. Elle vide le cache applicatif de DHIS2, pas le service worker
+enregistre par le navigateur, qui est precisement ce qui pose probleme.
 
-```
-https://<hote>/dhis-web-cache-cleaner/index.html
-```
+Le nettoyage se fait **par le navigateur** : supprimer les donnees du site, puis fermer tous
+les onglets DHIS2 avant de rouvrir — un service worker reste actif tant qu'un onglet
+subsiste.
 
-A defaut, dans les outils de developpement : *Application -> Service Workers -> Unregister*,
-puis *Storage -> Clear site data*. **Un rechargement force ne suffit pas** — il ne desinscrit
-pas le service worker.
+Instructions detaillees, redigees pour des utilisateurs non techniques et destinees a etre
+transmises telles quelles : [`vider-le-cache.md`](vider-le-cache.md).
+
+**Un rechargement force ne suffit pas**, meme avec `Ctrl`+`Maj`+`R`.
 
 ### Consequence pour le Go-Live
 
@@ -835,10 +838,10 @@ sain — et signaleront un incident de migration qui n'en est pas un.
 A prevoir dans le plan de bascule :
 
 1. **Prevenir avant** — un message aux utilisateurs, avec le lien du vide-cache et la
-   marche a suivre en trois lignes. Le faire avant la bascule, pas apres les premiers
-   appels.
-2. **Armer le support** — que la premiere reponse a « ca ne marche pas » soit le lien du
-   vide-cache, avant tout diagnostic serveur.
+   marche a suivre — [`vider-le-cache.md`](vider-le-cache.md) est ecrit pour cela. Le faire
+   avant la bascule, pas apres les premiers appels.
+2. **Armer le support** — que la premiere reponse a « ca ne marche pas » soit l'envoi de
+   [`vider-le-cache.md`](vider-le-cache.md), avant tout diagnostic serveur.
 3. **Le verifier soi-meme** — tester la bascule dans un navigateur ayant reellement utilise
    la 2.35, pas seulement en navigation privee, qui masque precisement ce probleme.
 
