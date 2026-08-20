@@ -715,35 +715,61 @@ mesure. **C'est elle qui dimensionnera la fenetre de bascule**, pas la migration
 
 ## Les mesures relevees
 
-Ces chiffres determinent la fenetre de bascule. Ils ne sont plus des intentions.
-
-| Mesure | Relevee | Consequence |
+| Etape | Mesure | Source |
 |---|---|---|
-| Import du dump (31 Go) | **27 min** | poste le plus lourd apres l'analytique |
-| Migrations Flyway | **< 1 s** sur la plupart des paliers | negligeable |
-| Demarrage d'un palier | **1 a 2 min** | sept paliers = une vingtaine de minutes |
-| Taille de la base migree | **31 Go** sur 100 Go provisionnes | pas de redimensionnement a prevoir |
-| Taille du magasin de fichiers | **vide** | rien a copier |
-| `analyticsTableUpdate` | **non mesure** | ← **la seule inconnue restante** |
-
-**Tout le reste est connu ; l'analytique ne l'est pas.** Sur une instance DHIS2, les tables
-analytiques atteignent couramment la taille des donnees sources, parfois davantage. Relever
-deux valeurs a l'issue de la generation en cours :
+| Import du dump (31 Go) | **27 min** | releve le 20 aout 2026 |
+| Migrations Flyway | **< 1 s** sur la plupart des paliers | journaux des sept paliers |
+| Demarrage d'un palier | **1 a 2 min** | journaux |
+| Sept paliers, bout en bout | **~20 min** | somme des demarrages |
+| Demarrage de la cible 2.41 | **~2 min** | journal |
+| **`analyticsTableUpdate`** | **58 min 29 s** | releve le 20 aout 2026 a 13h16 |
+| Taille du magasin de fichiers | **vide** | instance 2.35 |
+| Taille de la base apres analytique | **a relever** | voir ci-dessous |
 
 ```bash
-# Duree : lire l'horodatage de debut et de fin
-sudo /opt/alima/dhis2/scripts/dhis2ctl.sh applog dhis-analytics-table.log
-
-# Taille de la base apres generation
 gcloud sql instances describe pg16-dhis2-prod   --format="value(currentDiskSize)" --project=alima-dhis2-prod
 ```
 
-C'est cette duree qui dimensionne la fenetre, et cette taille qui arrete le dimensionnement
-definitif du disque — pas les 31 Go du dump.
+Cette derniere valeur arrete le dimensionnement definitif du disque — 100 Go sont
+provisionnes, la base pesait 31 Go avant l'analytique.
 
-> La generation peut se lancer **apres** la reouverture des saisies : DHIS2 fonctionne sans
-> tables analytiques a jour, seuls les tableaux de bord et rapports le refletent. A
-> arbitrer avec ALIMA — c'est le levier principal pour raccourcir l'indisponibilite.
+### La generation analytique domine tout le reste
+
+Presque une heure, contre une vingtaine de minutes pour les sept paliers reunis. **C'est
+elle qui decide de la duree de l'indisponibilite, et elle n'a pas a s'y trouver.**
+
+DHIS2 fonctionne sans tables analytiques a jour : la saisie, le suivi et l'API de donnees
+brutes sont intacts. Seuls les tableaux de bord, rapports et visualisations refletent l'etat
+de la derniere generation.
+
+| Scenario | Indisponibilite | Contrepartie |
+|---|---|---|
+| Analytique **dans** la fenetre | **~1 h 50** hors export et transfert | tableaux de bord justes des la reouverture |
+| Analytique **apres** reouverture | **~50 min** hors export et transfert | tableaux de bord en retard pendant ~1 h |
+
+Le second scenario divise l'indisponibilite par deux. **A arbitrer avec ALIMA** : la
+question n'est pas technique mais metier — une heure de tableaux de bord decales est-elle
+acceptable en echange d'une heure de saisie regagnee ?
+
+### Deux inconnues subsistent, et elles sont chez ALIMA
+
+Le rejeu commence par un export frais de la production 2.35, qu'il faut acheminer jusqu'a
+Cloud Storage. **Ces deux etapes ne sont pas mesurees** et elles encadrent tout le reste :
+
+| Etape | Pourquoi c'est inconnu |
+|---|---|
+| `pg_dump` de la production 2.35 | depend du serveur d'ALIMA, jamais chronometre |
+| Transfert vers Cloud Storage | 25 Go compresses — depend du debit montant d'ALIMA |
+
+Un transfert de 25 Go peut prendre de trente minutes a plusieurs heures selon le lien. **A
+mesurer avant de proposer une fenetre**, sans quoi l'estimation reste une supposition, si
+precise soit-elle par ailleurs.
+
+> **Piste a privilegier** : que le serveur d'ALIMA depose l'export **directement** dans
+> Cloud Storage, sans transiter par un poste de travail. Un compte de service dedie, en
+> ecriture seule sur un prefixe du bucket, supprime un aller-retour complet et ecarte au
+> passage le risque de voir des donnees de sante stationner sur une machine non maitrisee
+> (CGA art. 13).
 
 ---
 
