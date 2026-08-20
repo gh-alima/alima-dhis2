@@ -672,23 +672,20 @@ Dockerfile pour les paliers anciens.
 migration se déroule intégralement sur une copie, en parallèle, jusqu'à la bascule
 finale.
 
-### 9.1 Le magasin de fichiers se migre séparément
+### 9.1 Le magasin de fichiers — rien à migrer
 
-Point à ne pas manquer : **le dump PostgreSQL ne contient pas les fichiers**. Sur
-l'instance 2.35, ils se trouvent dans le répertoire `files/` sous `DHIS2_HOME`. Ils
-doivent être copiés vers le volume `dhis2-files` de la nouvelle instance, sans quoi la
-base migrée référencera des documents introuvables.
+En règle générale, **le dump PostgreSQL ne contient pas les fichiers** : ils vivent dans
+`files/` sous `DHIS2_HOME` et doivent être copiés séparément, sans quoi la base migrée
+référence des documents introuvables.
 
-Cette copie fait partie de la procédure de bascule, au même titre que la restauration du
-dump :
+**Constaté le 20 août 2026 : ce répertoire est vide sur l'instance 2.35 d'ALIMA.** Aucune
+pièce jointe, aucun document chargé. L'étape de copie disparaît donc de la bascule, et avec
+elle le dimensionnement de disque qu'elle conditionnait.
 
-1. **Audit (S1)** — relever l'emplacement exact et la **volumétrie** du répertoire
-   `files/` sur le serveur 2.35 ; cette taille conditionne le dimensionnement du disque
-   de la nouvelle VM.
-2. **Dry-run (S3)** — copie complète (`rsync`), puis vérification par sondage que les
-   pièces jointes s'ouvrent correctement depuis l'application migrée.
-3. **Bascule (S4)** — copie différentielle pendant le gel des saisies, pour ne
-   retransférer que ce qui a changé et réduire d'autant la fenêtre d'indisponibilité.
+> Le mécanisme reste en place et reste nécessaire — `backup-filestore.sh`,
+> `restore-filestore.sh`, volume `dhis2-files`, sauvegarde hebdomadaire. Dès la 2.41 en
+> service, les utilisateurs pourront déposer des documents : c'est l'étape de *migration*
+> qui disparaît, pas la protection. La décision **D17** conserve toute sa portée.
 
 Deux validations conditionnent le Go-Live et sont propres à ALIMA :
 
@@ -782,13 +779,13 @@ Docker de référence DHIS2 laisse d'ailleurs ce montage commenté.
 
 | # | Question | Impact | Proposition |
 |---|---|---|---|
-| 1 | Volumétrie actuelle du répertoire `files/` sur l'instance 2.35 ? | Dimensionnement du disque de la VM et durée de la copie à la bascule | **À relever pendant l'audit S1** — élément bloquant pour le dimensionnement |
+| 1 | ~~Volumétrie du répertoire `files/` sur l'instance 2.35 ?~~ | — | **Tranché le 20 août 2026 : le répertoire est vide.** Rien à copier à la bascule ; le dimensionnement du disque dépend désormais des seules tables analytiques (§9.1) |
 | 2 | SSO OpenID à activer ? Sur quel annuaire ? | Prévoir le bloc et le secret dès la conception, même désactivé | Prévoir le bloc, `DHIS2_SSO_OPENID_ACTIVATED=false` au départ |
-| 3 | Sur quelle plateforme se fera la recette utilisateur (S3) ? | Sans environnement hébergé, les référents ALIMA n'ont rien à tester | Instance temporaire créée pour la seule semaine de recette, puis supprimée — coût borné à cette période |
+| 3 | ~~Sur quelle plateforme se fera la recette utilisateur ?~~ | — | **Tranché : `dhis2-test.alima.ngo`**, en service depuis le 14 août 2026 et portant la base migrée en 2.41. C'est l'instance que les référents ALIMA testent |
 | 4 | Rétention Artifact Registry compatible avec la fenêtre de retour arrière ? | Un tag purgé = retour arrière impossible | Vérifier que les 5 versions conservées couvrent le besoin post-bascule |
 | 5 | ~~`CLAUDE.md` versionné ou ignoré ?~~ | — | **Tranché : ignoré.** L'outillage d'assistance relève du poste de travail, pas de la définition du projet ; la documentation de référence est dans `docs/` |
 | 6 | Qui déclenche les déploiements, qui les approuve ? | Sans séparation des deux rôles, l'approbation reste une formalité | Deux comptes distincts — voir §9.4 du provisionnement |
-| 7 | Point de terminaison exact de la sonde de disponibilité | Une sonde inadaptée signale un service en panne alors qu'il fonctionne | `/api/system/ping` — à confirmer sur l'image 2.41 retenue. `curl` est bien présent dans `dhis2/core` : le déploiement de référence DHIS2 s'en sert |
+| 7 | ~~Point de terminaison de la sonde de disponibilité~~ | — | **Tranché par l'expérience.** Production : `/dhis-web-login/`, seul chemin répondant 200 sans session en 2.41. Paliers : `/api/system/ping`, via leur surcharge — `dhis-web-login` n'existe pas dans les versions anciennes. Et `curl` **n'est pas** présent partout : absent de `dhis2/core:2.35.14`, les images de palier l'installent |
 | 8 | Journalisation d'audit système (`SYSTEM_AUDIT_ENABLED`) activée ? | Volumétrie des journaux et de la base, exigences de traçabilité | Désactivée par défaut ; à activer si ALIMA a une exigence d'audit explicite |
 
 ---
@@ -818,30 +815,46 @@ de référence publié par l'équipe DHIS2 :
 
 ## 14. Suites
 
+État au **20 août 2026**.
+
 ### Fait
 
-1. **Squelette du dépôt** conforme au §10.
-2. **Image 2.41.9.1 construite et validée localement**, persistance comprise :
-   `server.xml` compatible Tomcat 9.0.111, `curl` présent dans l'image de base, magasin
-   de fichiers et journaux survivant au remplacement du conteneur, aucune migration
-   rejouée au redémarrage.
-3. **Infrastructure GCP provisionnée** le 14 août 2026 — voir l'état détaillé dans
-   [`provisionnement-gcp.md`](provisionnement-gcp.md).
+1. **Dépôt** conforme au §10, avec une addition née de la migration : chaque branche
+   `migration/*` porte son propre `docker/docker-compose.override.yml`, que Compose charge
+   automatiquement et que le pipeline téléverse. La branche déployée suffit à déterminer la
+   configuration — aucun paramètre à renseigner, donc aucun à oublier.
+2. **Infrastructure GCP** provisionnée le 14 août 2026, en service sur
+   <https://dhis2-test.alima.ngo> — voir [`provisionnement-gcp.md`](provisionnement-gcp.md).
+3. **Sept images construites et éprouvées**, de 2.35.14 à 2.41.9.1. Les tags se résolvent
+   par `./scripts/list-palier-images.sh`, jamais par une table recopiée.
+4. **Export de production importé** — 27 min pour 31 Go, 457 tables.
+5. **Montée 2.35 → 2.41 aboutie** sur une copie de la base ALIMA, palier par palier, le
+   20 août 2026. Déroulé et incidents dans [`plan-migration.md`](plan-migration.md).
 
-### En attente d'ALIMA
+### En cours
 
-4. **Enregistrement DNS** `dhis2-test.alima.ngo` → `34.38.89.219`. Adresse transmise à
-   l'équipe ALIMA. **Bloquant** : sans résolution, pas de certificat TLS, donc pas de
-   démarrage de Nginx ni de premier déploiement.
-5. **Volumétrie du magasin de fichiers** de l'instance 2.35 — conditionne le
-   dimensionnement du disque et la durée de la copie à la bascule (§12, point 1).
+6. **Génération des tables analytiques** sur la 2.41. Sa durée et la taille de base
+   résultante sont les **deux dernières inconnues** du dimensionnement et de la fenêtre de
+   bascule.
 
-### À suivre
+### Suites immédiates
 
-6. Préparation de la VM (`install-vm.sh`), déclencheurs Cloud Build, première
-   construction et premier déploiement.
-7. Rédaction de `docs/variables-environnement.md` — taxonomie exhaustive des variables
-   `DHIS2_*`, avec valeur par défaut, propriété `dhis.conf` correspondante et caractère
-   sensible ou non.
-8. Construction de l'image 2.35.14 (palier de départ) et validation locale du premier
-   saut de migration sur une copie de la base ALIMA.
+7. **Recette par les référents ALIMA** sur `dhis2-test.alima.ngo`. Trois points appellent
+   une vérification ciblée plutôt qu'un parcours libre :
+   - **Power BI** — si la connexion attaque la base directement, les requêtes visant
+     `users` ou `usercredentials` sont à reprendre : ces tables ont fusionné dans
+     `userinfo` au palier 2.38. Aucun impact si la connexion passe par `/api/analytics`.
+   - **Configuration SMTP** — à ressaisir : les paramètres chiffrés du dump l'ont été avec
+     la clé de l'ancienne instance.
+   - **Tableaux de bord et visualisations** — la 2.36 a fait basculer tout le partage en
+     `jsonb` et la 2.35 a fusionné graphiques et tableaux dans `visualization`.
+8. **Fenêtre de bascule à convenir** avec ALIMA, une fois la recette validée. La migration
+   sera **rejouée à l'identique** sur un export frais — procédure dans
+   [`plan-migration.md`](plan-migration.md), section *Rejouer la migration le jour J*.
+9. **Retirer l'enregistrement DNS résiduel** `34.79.172.183` de `dhis2.alima.ngo` avant la
+   bascule : il sert un certificat expiré sans lien avec ALIMA.
+
+### Reporté
+
+10. `docs/variables-environnement.md` — taxonomie des variables `DHIS2_*`. Utile à
+    l'exploitation courante, sans effet sur la bascule.

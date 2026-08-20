@@ -57,34 +57,21 @@ Ajouter un palier si besoin :
 
 ### Images publiées
 
-Construites le 20 août 2026, dans
-`europe-west1-docker.pkg.dev/alima-dhis2-prod/dhis2-images/dhis2-core` :
+Les tags vivent dans Artifact Registry, pas dans ce document : une table recopiée ici se
+périme dès la première reconstruction — c'est arrivé une fois.
 
-| Palier | Tag | Taille |
-|---|---|---|
-| 2.35.14 | `2.35.14.20260820.01.2a73704` | 740 Mo |
-| 2.36.13.2 | `2.36.13.2.20260820.01.b93b81d` | 781 Mo |
-| 2.37.10.0 | `2.37.10.0.20260820.01.225422a` | 746 Mo |
-| 2.38.7.0 | `2.38.7.0.20260820.01.c947c42` | 713 Mo |
-| 2.39.10.1 | `2.39.10.1.20260820.01.fd92b5f` | 712 Mo |
-| 2.40.12.0 | `2.40.12.0.20260820.01.56df7c4` | 801 Mo |
-| **2.41.9.1** (cible) | `2.41.9.1.20260820.01.0f45d7d` | 781 Mo |
+```bash
+./scripts/list-palier-images.sh
+```
 
-> ⚠ **Ces tags peuvent disparaître avant la fin de la migration.** La politique de
-> nettoyage du registre conserve les 10 versions les plus récentes et purge au-delà de
-> 30 jours. Si la migration s'étale, un palier ancien peut sortir des deux critères et
-> être supprimé.
->
-> Ce n'est pas une perte : chaque palier se reconstruit à l'identique depuis sa branche,
-> en deux minutes. Mais mieux vaut **vérifier la présence du tag avant chaque palier** que
-> de le découvrir au déploiement.
->
-> Pour les figer, ajouter une règle de conservation sur les tags de palier :
->
-> ```bash
-> gcloud artifacts docker tags list \
->   europe-west1-docker.pkg.dev/alima-dhis2-prod/dhis2-images/dhis2-core
-> ```
+Le script déduit les versions des branches `migration/*` et la cible du `Dockerfile` de
+`main`, puis interroge le registre. Il signale toute image manquante et rappelle comment la
+reconstruire. Ajouter un palier suffit à le faire apparaître.
+
+> ⚠ **Les images peuvent disparaître du registre.** La politique de nettoyage conserve les
+> 10 versions les plus récentes et purge au-delà de 30 jours. Lancer le script **avant**
+> chaque campagne de migration plutôt que de le découvrir au déploiement : reconstruire un
+> palier depuis sa branche prend deux minutes.
 
 ---
 
@@ -122,11 +109,16 @@ par précaution allonge la migration sans rien garantir.
 
 ### 1. Récupérer la production
 
-Deux éléments, et pas un seul :
+**Un seul élément : l'export de la base** (`pg_dump`).
 
-- **l'export de la base** (`pg_dump`) ;
-- **le répertoire `files/`** de DHIS2 — il n'est pas dans l'export. Sans lui, la base
-  migrée référencera des documents introuvables.
+En règle générale il en faudrait deux — le dump ne contient pas le magasin de fichiers, et
+une base restaurée sans lui référence des documents introuvables. **Vérifié le 20 août 2026
+sur l'instance 2.35 : le répertoire `files/` est vide.** Aucune pièce jointe, aucun document
+chargé. Rien à transférer.
+
+> Le mécanisme de sauvegarde du magasin de fichiers reste en place et reste nécessaire :
+> dès que la 2.41 sera en service, les utilisateurs pourront y déposer des documents.
+> C'est l'étape de *migration* qui disparaît, pas la sauvegarde.
 
 > Données de santé : l'export ne transite ni par messagerie ni par support amovible
 > (CGA art. 13). Convenir d'un canal à accès restreint.
@@ -295,24 +287,15 @@ La base est alors prête pour le premier palier.
 
 ### 8. Vérifier la présence des images
 
-Les sept images sont publiées (voir *Images publiées* ci-dessus). Confirmer que le tag du
-palier visé existe toujours avant de lancer l'étape — la politique de nettoyage peut
-l'avoir purgé si la migration s'étale :
+Confirmer que **toutes** les images existent encore avant d'ouvrir la fenêtre — pas au
+moment de déployer chaque palier :
 
 ```bash
-gcloud artifacts docker images list \
-  europe-west1-docker.pkg.dev/alima-dhis2-prod/dhis2-images/dhis2-core \
-  --include-tags --project=alima-dhis2-prod | grep '^.*2\.3'
+./scripts/list-palier-images.sh
 ```
 
-Le cas échéant, reconstruire depuis la branche — deux minutes :
-
-```bash
-git checkout migration/2.35.14
-gcloud builds submit --config=cloudbuild.yaml \
-  --substitutions=_VCS_REF=$(git rev-parse --short HEAD) \
-  --project=alima-dhis2-prod
-```
+Le script sort en erreur si une image manque et rappelle la commande de reconstruction.
+Compter deux minutes par palier.
 
 > Le déclencheur automatique ne réagit qu'aux poussées sur `main` : les branches de palier
 > se construisent à la demande, ce qui évite de saturer le registre.
@@ -598,7 +581,7 @@ Passe sans incident. Dernier palier avant la cible.
 
 ---
 
-### Cible — 2.41.9.1
+### Deployer la cible — 2.41.9.1
 
 Ce deploiement ne ressemble a aucun des precedents : il part de **`main`**, qui ne porte
 aucune surcharge. La configuration de production reprend ses droits d'un seul coup.
@@ -657,6 +640,86 @@ sudo /opt/alima/dhis2/scripts/dhis2ctl.sh applog dhis.log | grep -iE "pool|Versi
 3. **Valider Power BI** — en particulier si la connexion attaque la base directement :
    `usercredentials` a fusionne dans `userinfo` au palier 2.38 (cf. palier 4).
 4. **Retirer l'enregistrement DNS residuel** `34.79.172.183` avant la bascule de production.
+
+---
+
+### Cible — 2.41.9.1, 20 aout 2026
+
+**La montee 2.35 -> 2.41 est aboutie.** Les six paliers puis la cible sont passes le meme
+jour, sur une copie de la base de production. Generation des tables analytiques lancee dans
+la foulee.
+
+---
+
+## Rejouer la migration le jour J
+
+Ce qui precede etait une repetition. La bascule reelle rejoue exactement la meme sequence,
+sur un export **frais** de la production.
+
+Pourquoi un nouvel export : entre la repetition et la bascule, ALIMA continue de saisir. La
+base migree aujourd'hui est une photographie perimee — elle a servi a eprouver le chemin,
+pas a devenir la production.
+
+### La sequence
+
+**1. Verifier que les images sont toujours la**
+
+```bash
+./scripts/list-palier-images.sh
+```
+
+Le registre purge au-dela de 30 jours. Si un palier manque, le reconstruire depuis sa
+branche avant d'ouvrir la fenetre — pas pendant.
+
+**2. Gel des saisies, puis export de la production 2.35**
+
+**3. Vider la base cible et importer** (cf. « Preparer », etapes 3 a 6)
+
+```bash
+FORCE=1 ./scripts/import-dump.sh gs://alima-dhis2-prod-dhis2-backups/import/dhis-2.35.sql.gz
+```
+
+`FORCE=1` est necessaire : la base contient la migration de repetition. Compter **~27 min**
+pour 31 Go, mesure relevee.
+
+**4. Rejouer les paliers, dans l'ordre**
+
+Pour chaque version, du plus ancien au plus recent :
+
+```bash
+gcloud sql backups create --instance=pg16-dhis2-prod   --description="avant palier <version>" --project=alima-dhis2-prod
+
+gcloud builds triggers run dhis2-deploy-prod --region=europe-west1   --branch=migration/<version> --substitutions=_IMAGE_TAG=<tag releve a l'etape 1>
+```
+
+Attendre `All startup routines done` avant de passer au suivant. Ne pas laisser un palier
+tourner au-dela : `ANALYTICS_TABLE` est planifiee a midi UTC et se declencherait pour rien.
+
+**5. Deployer la cible depuis `main`** (cf. « Cible — 2.41.9.1 » plus haut)
+
+**6. Apres la mise en service**
+
+- ressaisir la configuration SMTP ;
+- lancer `analyticsTableUpdate` et relever la taille de la base ;
+- valider Power BI ;
+- basculer le DNS de production, apres avoir retire l'enregistrement residuel
+  `34.79.172.183`.
+
+### Duree a prevoir
+
+| Etape | Mesure |
+|---|---|
+| Import du dump | **~27 min** |
+| Six paliers | quelques minutes chacun ; Flyway a mis moins d'une seconde sur la plupart |
+| Demarrage de la cible | ~2 min |
+| `analyticsTableUpdate` | **inconnu** — a relever lors de la generation en cours |
+
+La generation des tables analytiques est le poste le plus lourd et le seul encore non
+mesure. **C'est elle qui dimensionnera la fenetre de bascule**, pas la migration de schema.
+
+> La montee peut se faire **avant** l'ouverture de la fenetre si la copie tourne en
+> parallele de la production 2.35 : seul l'export final et la bascule DNS exigent un gel
+> des saisies. A arbitrer avec ALIMA selon la tolerance a l'interruption.
 
 ---
 
