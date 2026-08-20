@@ -176,7 +176,8 @@ echo | openssl s_client -connect dhis2-test.alima.ngo:443 2>/dev/null \
 
 > **Plusieurs adresses en réponse à `dig`** est un problème : le trafic serait réparti
 > entre elles. `dhis2.alima.ngo` est dans ce cas — un enregistrement résiduel vers
-> `34.79.172.183`, sans lien avec ALIMA, à supprimer avant la bascule.
+> `34.79.172.183`, sans lien avec ALIMA. Ce nom n'est pas celui de la production :
+> l'instance en service répond sur **`endom.alima.ngo`**, et c'est lui qui basculera.
 
 ### Consulter les journaux depuis GCP
 

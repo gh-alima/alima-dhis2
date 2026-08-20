@@ -822,15 +822,83 @@ tableaux de bord decales**.
 2. **Export final** de la base de production.
 3. **Rejeu de la chaine complete** — procedure detaillee ci-dessus,
    *Rejouer la migration le jour J*. Duree connue, puisque mesuree.
-4. **Bascule du nom d'hote** : `dhis2.alima.ngo` vers la nouvelle instance
-   ([provisionnement, §État](provisionnement-gcp.md)).
+4. **Bascule du nom d'hote** vers `endom.alima.ngo` — voir ci-dessous.
 5. **Verifications fonctionnelles** avec les referents, puis reouverture des saisies.
 6. **Generation des tables analytiques**, si le choix est fait de la reporter apres
    reouverture.
 
-> Avant la bascule, supprimer l'enregistrement DNS residuel de `dhis2.alima.ngo` vers
-> `34.79.172.183` — un hote tiers sans lien avec ALIMA, servant un certificat expire. Sans
-> cela, la moitie du trafic de production partirait vers un serveur non maitrise.
+### Basculer `endom.alima.ngo`
+
+`endom.alima.ngo` est le nom de l'instance **de production** 2.35. C'est lui qui doit
+pointer vers la nouvelle VM — pas `dhis2-test.alima.ngo`, qui reste l'acces de recette.
+
+Trois choses changent en meme temps : la resolution DNS, le certificat TLS et l'URL de base
+declaree a DHIS2. **Dans cet ordre**, sans quoi on obtient une instance joignable qui
+s'annonce sous un autre nom, ou un HTTPS en erreur.
+
+**Avant le jour J**
+
+- Faire **abaisser le TTL** de `endom.alima.ngo` par ALIMA — 24 h a l'avance au minimum.
+  Un TTL de 3600 s fige la bascule pour une heure, et le retour arriere avec elle.
+- Verifier que le nom ne resout que vers **une seule** adresse :
+
+  ```bash
+  dig +short endom.alima.ngo
+  ```
+
+  Plusieurs reponses signifient que le trafic se repartirait entre elles. C'est le cas de
+  `dhis2.alima.ngo`, qui porte un enregistrement residuel vers `34.79.172.183` — un hote
+  tiers servant un certificat expire, sans lien avec ALIMA.
+
+**Pendant la fenetre, une fois la migration terminee**
+
+```bash
+# 1. Declarer la nouvelle URL de base — avant la bascule DNS : DHIS2 n'a pas
+#    besoin que le nom resolve pour l'inscrire dans sa configuration.
+printf '%s' 'https://endom.alima.ngo' \
+  | gcloud secrets versions add dhis2-fqdn --data-file=- --project=alima-dhis2-prod
+
+# 2. Redeployer pour que render-env.sh regenere le .env avec cette valeur.
+gcloud builds triggers run dhis2-deploy-prod --region=europe-west1 \
+  --branch=main --substitutions=_IMAGE_TAG=<tag de la cible>
+```
+
+**3. ALIMA fait pointer `endom.alima.ngo` vers `34.38.89.219`.** Attendre la propagation :
+
+```bash
+dig +short endom.alima.ngo    # doit renvoyer 34.38.89.219, et rien d'autre
+```
+
+**4. Etendre le certificat au nouveau nom**, une fois la resolution effective — le defi
+HTTP-01 exige que Let's Encrypt atteigne la VM sous ce nom :
+
+```bash
+# Sur la VM. certbot --standalone se lie au port 80 : Nginx doit liberer la place.
+cd /opt/alima/dhis2
+sudo docker compose stop nginx
+
+sudo certbot certonly --standalone --cert-name dhis2 \
+  -d dhis2-test.alima.ngo -d endom.alima.ngo
+
+sudo docker compose start nginx
+```
+
+Les **deux** noms figurent dans la commande : `--cert-name dhis2` remplace le certificat
+existant, et omettre `dhis2-test.alima.ngo` le priverait de TLS. Le renouvellement
+automatique reprendra les deux noms.
+
+**5. Verifier**
+
+```bash
+curl -sI https://endom.alima.ngo/dhis-web-login/ | head -3
+echo | openssl s_client -connect endom.alima.ngo:443 2>/dev/null \
+  | openssl x509 -noout -subject -dates
+```
+
+> Entre l'etape 3 et la fin de l'etape 4, HTTPS repond en erreur de certificat sous le
+> nouveau nom — quelques minutes, a l'interieur de la fenetre, avant reouverture des
+> saisies. Cet ecart est inevitable avec un defi HTTP-01 : le certificat ne peut pas etre
+> emis avant que le nom pointe vers la VM.
 
 **La production 2.35 reste intacte** jusqu'a la reouverture des saisies. En cas de
 difficulte, le retour arriere consiste a ne pas basculer le DNS — rien a defaire.
@@ -873,7 +941,7 @@ transmises telles quelles : [`vider-le-cache.md`](vider-le-cache.md).
 
 ### Consequence pour le Go-Live
 
-Le jour ou `dhis2.alima.ngo` passera de la 2.35 a la 2.41, **chaque navigateur ayant utilise
+Le jour ou `endom.alima.ngo` passera de la 2.35 a la 2.41, **chaque navigateur ayant utilise
 l'ancienne instance portera un service worker enregistre par la 2.35**. Les utilisateurs
 verront des tableaux de bord vides ou des erreurs de chargement, sur un serveur pourtant
 sain — et signaleront un incident de migration qui n'en est pas un.

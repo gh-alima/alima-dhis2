@@ -851,8 +851,10 @@ de référence publié par l'équipe DHIS2 :
 8. **Fenêtre de bascule à convenir** avec ALIMA, une fois la recette validée. La migration
    sera **rejouée à l'identique** sur un export frais — procédure dans
    [`plan-migration.md`](plan-migration.md), section *Rejouer la migration le jour J*.
-9. **Retirer l'enregistrement DNS résiduel** `34.79.172.183` de `dhis2.alima.ngo` avant la
-   bascule : il sert un certificat expiré sans lien avec ALIMA.
+9. **Basculer `endom.alima.ngo`** — nom de l'instance de production — vers la nouvelle VM.
+   L'opération enchaîne trois changements dans un ordre imposé : URL de base déclarée à
+   DHIS2, résolution DNS, puis extension du certificat au nouveau nom. Procédure détaillée
+   dans [`plan-migration.md`](plan-migration.md), section *Basculer `endom.alima.ngo`*.
 
 ### Reporté
 
