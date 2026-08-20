@@ -180,12 +180,21 @@ de la VM :
 ```bash
 SA=$(gcloud sql instances describe pg16-dhis2-prod \
        --format="value(serviceAccountEmailAddress)" --project=alima-dhis2-prod)
+echo "${SA}"    # doit être non vide
 
-gcloud storage objects add-iam-policy-binding \
-  gs://alima-dhis2-prod-dhis2-backups/import/dhis-2.35.sql.gz \
+gcloud storage buckets add-iam-policy-binding \
+  gs://alima-dhis2-prod-dhis2-backups \
   --member="serviceAccount:${SA}" --role="roles/storage.objectViewer" \
   --project=alima-dhis2-prod
 ```
+
+> L'autorisation se donne sur le **bucket**, pas sur l'objet. Le bucket est créé avec
+> l'accès uniforme au niveau du bucket (`--uniform-bucket-level-access`), qui désactive
+> les autorisations par objet — une tentative sur l'objet échoue sur
+> `Object policies are disabled for bucket`.
+>
+> Cette portée est de toute façon celle qu'il faut : Cloud SQL devra aussi lire ce bucket
+> pour les restaurations ultérieures.
 
 ### 4. Vider la base cible
 
