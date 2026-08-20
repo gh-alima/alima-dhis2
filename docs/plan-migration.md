@@ -586,6 +586,12 @@ Ne pas laisser un palier tourner plus longtemps que necessaire : une fois
 
 ---
 
+### Palier 5 — 2.39.10.1, 20 aout 2026
+
+Passe sans incident, sans correctif supplementaire.
+
+---
+
 ## Ce qu'il faut mesurer en chemin
 
 Ces chiffres déterminent la fenêtre de bascule. Les relever palier par palier :
