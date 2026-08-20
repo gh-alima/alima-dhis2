@@ -494,6 +494,45 @@ documentation de la version et adapter `docker/init.sh`.
 
 ---
 
+### Palier 3 — 2.37.10.0, 20 aout 2026
+
+Premier palier sur **Tomcat 9.0.82** (les precedents tournaient en 8.5). Toujours Java 8.
+
+Les migrations Flyway passent, puis l'initialisation Spring echoue :
+
+```
+ClassCastException: com.zaxxer.hikari.HikariDataSource cannot be cast to
+                    com.mchange.v2.c3p0.ComboPooledDataSource
+  at DataSourcePoolMetricsConfig.lambda$dataSourceMetadataProvider$0(:109)
+```
+
+DHIS2 2.37 branche les metriques du pool de connexions en supposant c3p0, alors que la
+configuration demande Hikari (`db.pool.type = hikari`). Le contexte meurt ; Tomcat demarre
+mais ne sert rien.
+
+C'est le meme sujet que le `connection pool max size: null` du palier 2 : la transition de
+c3p0 vers Hikari est mal finie dans ces versions.
+
+**Correctif** — `monitoring.dbpool.enabled = off`, porte par la surcharge de palier :
+
+```yaml
+services:
+  dhis2:
+    environment:
+      DHIS2_MONITORING_DBPOOL: "off"
+```
+
+`environment` prime sur `env_file` : le `.env` genere depuis Secret Manager garde `on`, seul
+le palier bascule. Un palier n'a rien a superviser.
+
+> **La cible 2.41 n'est pas concernee** : elle tourne en production avec cette metrique
+> active. Ne pas propager ce reglage a `main`.
+
+Les migrations 2.37 ayant abouti avant l'echec, le redemarrage reprend sans rejouer quoi
+que ce soit — Flyway trouvera le schema a jour.
+
+---
+
 ## Ce qu'il faut mesurer en chemin
 
 Ces chiffres déterminent la fenêtre de bascule. Les relever palier par palier :
