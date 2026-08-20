@@ -459,6 +459,139 @@ OAuth ou passerelle SMS eventuellement chiffree.
 
 ---
 
+### Palier 2 — 2.36.13.2, 20 aout 2026
+
+Migrations les plus lourdes de cette version :
+
+- `V2_36_11__Migrate_sharings_to_jsonb` — bascule de tout le partage (attributs, roles,
+  groupes, elements de donnees, programmes, tableaux de bord...) vers une colonne `jsonb`
+- migrations `name => shortname`, qui renseignent les noms courts manquants
+
+Les `WARN ... already exists, skipping` sont attendus : Flyway retrouve des objets deja
+presents et poursuit.
+
+#### A verifier sur la cible 2.41 — taille du pool de connexions
+
+```
+2.35.14  Hibernate configuration loaded: ... connection pool max size: 40
+2.36.13  Hibernate configuration loaded: ... connection pool max size: null
+```
+
+`init.sh` ecrit pourtant `connection.pool.max_size = 40` et `db.pool.type = hikari`. La
+2.35 utilisait c3p0 et lisait cette valeur ; a partir de la 2.36 DHIS2 passe sur Hikari, et
+cette ligne de journal interroge une clef propre a l'ancien pool.
+
+Sans consequence sur un palier, qui ne recoit aucun trafic. **Mais a controler au
+demarrage de la 2.41** : si la taille du pool n'est pas appliquee, DHIS2 retombe sur sa
+valeur par defaut, ce qui se paie en charge reelle. Verification :
+
+```bash
+sudo /opt/alima/dhis2/scripts/dhis2ctl.sh applog dhis.log | grep -i "pool"
+```
+
+Si la valeur reste `null` en 2.41, chercher la clef attendue par Hikari dans la
+documentation de la version et adapter `docker/init.sh`.
+
+---
+
+### Palier 3 — 2.37.10.0, 20 aout 2026
+
+Premier palier sur **Tomcat 9.0.82** (les precedents tournaient en 8.5). Toujours Java 8.
+
+Les migrations Flyway passent, puis l'initialisation Spring echoue :
+
+```
+ClassCastException: com.zaxxer.hikari.HikariDataSource cannot be cast to
+                    com.mchange.v2.c3p0.ComboPooledDataSource
+  at DataSourcePoolMetricsConfig.lambda$dataSourceMetadataProvider$0(:109)
+```
+
+DHIS2 2.37 branche les metriques du pool de connexions en supposant c3p0, alors que la
+configuration demande Hikari (`db.pool.type = hikari`). Le contexte meurt ; Tomcat demarre
+mais ne sert rien.
+
+C'est le meme sujet que le `connection pool max size: null` du palier 2 : la transition de
+c3p0 vers Hikari est mal finie dans ces versions.
+
+**Correctif** — `monitoring.dbpool.enabled = off`, porte par la surcharge de palier :
+
+```yaml
+services:
+  dhis2:
+    environment:
+      DHIS2_MONITORING_DBPOOL: "off"
+```
+
+`environment` prime sur `env_file` : le `.env` genere depuis Secret Manager garde `on`, seul
+le palier bascule. Un palier n'a rien a superviser.
+
+> **La cible 2.41 n'est pas concernee** : elle tourne en production avec cette metrique
+> active. Ne pas propager ce reglage a `main`.
+
+Les migrations 2.37 ayant abouti avant l'echec, le redemarrage reprend sans rejouer quoi
+que ce soit — Flyway trouvera le schema a jour.
+
+---
+
+### Palier 4 — 2.38.7.0, 20 aout 2026
+
+Premier palier a aboutir entierement depuis le 2.36 : `All startup routines done`,
+`DHIS 2 Version: 2.38.7`, demarrage en 103 s. Le correctif dbpool tient
+(`monitoring.dbpool.enabled is disabled`).
+
+| | |
+|---|---|
+| Tomcat | 9.0.90 |
+| **Java** | **11.0.23** — bascule depuis Java 8 |
+| Duree de demarrage | 103 s |
+
+La JVM recoit desormais des `--add-opens` (`java.base/java.lang`, `java.io`, `java.util`,
+`java.util.concurrent`, `java.rmi/sun.rmi.transport`) : l'image les pose elle-meme, rien a
+regler de notre cote.
+
+#### Une migration structurante — `V2_38_35__Migrate_user_to_userinfo`
+
+```sql
+UPDATE userinfo SET username = uc.username, password = uc.password, ... FROM users AS uc
+```
+
+Les identifiants quittent `usercredentials` pour rejoindre `userinfo`. Consequence a
+verifier en recette : **toute requete SQL directe visant `users` ou `usercredentials`**
+cesse de fonctionner — export, tableau de bord, script d'exploitation.
+
+> A verifier cote **Power BI** : si la connexion passe par l'API DHIS2 (`/api/analytics`),
+> aucun impact. Si elle attaque la base directement, les requetes touchant les tables
+> d'utilisateurs sont a reprendre. C'est le genre d'ecart qui ne se voit qu'a l'usage —
+> a inscrire au plan de recette.
+
+Egalement dans ce palier : `V2_38_37` deplace les criteres de
+`trackedentityinstancefilter` vers une colonne `entityquerycriteria` en jsonb.
+
+#### Le planificateur redemarre les taches en retard
+
+```
+Scheduler started with one or more unexecuted jobs:
+Job [bIbXlsXoz2p, Analytics every day at noon] ... supposed to be: Fri Aug 14 12:00:00 UTC
+```
+
+Les taches heritees du dump ont manque leurs echeances pendant l'arret de l'ancienne
+instance. DHIS2 les signale et les reprogramme — c'est le comportement attendu.
+
+**Point de vigilance** : `ANALYTICS_TABLE` est planifiee du lundi au vendredi a midi UTC. Si
+un palier tourne a cette heure-la, une generation complete des tables analytiques peut se
+declencher — longue, inutile a ce stade, et gourmande en ressources.
+
+Ne pas laisser un palier tourner plus longtemps que necessaire : une fois
+`All startup routines done` atteint et la version confirmee, passer au suivant.
+
+---
+
+### Palier 5 — 2.39.10.1, 20 aout 2026
+
+Passe sans incident, sans correctif supplementaire.
+
+---
+
 ## Ce qu'il faut mesurer en chemin
 
 Ces chiffres déterminent la fenêtre de bascule. Les relever palier par palier :
