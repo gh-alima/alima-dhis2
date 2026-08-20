@@ -71,37 +71,26 @@ RUN chmod +x /usr/local/bin/init.sh /usr/local/bin/wait-for-it.sh \
         /usr/local/tomcat/temp \
         /usr/local/tomcat/webapps
 
-# Outils requis par les etapes suivantes. Aucun n'est garanti present : les
-# images de la ligne DHIS2 varient d'une version a l'autre. Releve :
-#   2.35.14  ni curl ni wget ni nc ; unzip present
-#   2.37.10  unzip absent egalement
-# D'ou une installation conditionnelle plutot qu'une hypothese.
+# Preparer l'application deployee par Tomcat.
 #
-#   unzip  deplie ROOT.war a la construction (voir l'etape suivante)
-#   curl   sonde de disponibilite ; sans lui le conteneur reste indefiniment
-#          "health: starting" alors que DHIS2 tourne
+# Les images de la ligne DHIS2 ne sont PAS homogenes — releve, pas suppose :
 #
-# L'image cible 2.41 embarque curl : seuls les paliers ont besoin de ceci.
-RUN if ! command -v unzip >/dev/null || ! command -v curl >/dev/null; then       apt-get update    && apt-get install -y --no-install-recommends unzip curl    && rm -rf /var/lib/apt/lists/*;     fi  && unzip -v > /dev/null  && curl --version | head -1
+#   2.35.14   ROOT.war + un repertoire ROOT VIDE. Tomcat voit un contexte deja
+#             deploye, ne deplie jamais l'archive, et sert le vide en 500 ms.
+#             (unpackWARs="false" dans son server.xml, ligne 153.)
+#   2.37.10   aucune archive : ROOT est deja depliee. Rien a faire.
+#
+# D'ou des tests plutot que des hypotheses. Deplier a la construction rend le
+# resultat deterministe, accelere le demarrage et evite au conteneur d'ecrire
+# dans webapps. Le controle final vaut pour les deux cas : il porte sur le JAR
+# dont l'absence provoquait l'echec d'origine
+# (« URL cannot be resolved to absolute file path ... war:file: »).
+RUN cd /usr/local/tomcat/webapps  && if [ -f ROOT.war ]; then         command -v unzip > /dev/null      || { apt-get update        && apt-get install -y --no-install-recommends unzip        && rm -rf /var/lib/apt/lists/*; } ;         rm -rf ROOT && mkdir ROOT && cd ROOT      && unzip -q ../ROOT.war      && rm -f ../ROOT.war ;     fi  && ls /usr/local/tomcat/webapps/ROOT/WEB-INF/lib/dhis-service-setting-*.jar  && chown -R 1000:1000 /usr/local/tomcat/webapps
 
-# Palier de migration : deplier l'archive a la construction.
-#
-# L'image livre ROOT.war ET un repertoire webapps/ROOT vide. Tomcat y voit un
-# contexte deja deploye, plus recent que l'archive, et ne la decompresse donc
-# jamais : il sert un repertoire vide en 500 ms, sans une ligne de DHIS2.
-# Corriger unpackWARs ne suffit pas - le repertoire fantome prime.
-#
-# Deplier ici plutot qu'au demarrage rend le resultat deterministe, accelere
-# nettement le demarrage, et evite au conteneur d'ecrire dans webapps.
-# Le controle sur dhis-service-setting fait echouer la construction si
-# l archive change de forme, plutot que de livrer une image qui demarre sur du
-# vide. DHIS2 se configure par annotations : il n a pas de WEB-INF/web.xml.
-RUN cd /usr/local/tomcat/webapps \
- && rm -rf ROOT && mkdir ROOT && cd ROOT \
- && unzip -q ../ROOT.war \
- && rm -f ../ROOT.war \
- && ls WEB-INF/lib/dhis-service-setting-*.jar \
- && chown -R 1000:1000 /usr/local/tomcat/webapps
+# curl, requis par la sonde de disponibilite. Absent de 2.35.14 (comme wget et
+# nc), present dans 2.37.10 : la encore, on teste. Sans lui le conteneur reste
+# indefiniment "health: starting" alors que DHIS2 fonctionne.
+RUN command -v curl > /dev/null  || { apt-get update    && apt-get install -y --no-install-recommends curl    && rm -rf /var/lib/apt/lists/*; }  && curl --version | head -1
 
 # Connecteur AJP : inutilise - Nginx parle HTTP - et refuse par Tomcat 8.5
 # faute de secret, ce qui produit un SEVERE a chaque demarrage. Le retirer
