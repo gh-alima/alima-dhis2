@@ -341,28 +341,50 @@ gcloud sql backups list --instance=pg16-dhis2-prod --limit=5
 gcloud sql backups restore <ID> --restore-instance=pg16-dhis2-prod
 ```
 
-**2. Démarrer le palier** — sur la VM, sans passer par Cloud Build : un palier est une
-exécution transitoire, l'approbation et l'attente de sonde n'y ont pas d'objet.
+**2. Démarrer le palier** — par le pipeline, en le lançant **sur la branche du palier**
+et non sur `main` :
 
 ```bash
-TAG=2.36.13.2.20260820.01.b93b81d
-
-sudo sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${TAG}|" /opt/alima/dhis2/.env
-cd /opt/alima/dhis2
-sudo docker compose -f docker-compose.yml -f docker-compose.palier.yml pull dhis2
-sudo docker compose -f docker-compose.yml -f docker-compose.palier.yml up -d dhis2
+gcloud builds triggers run dhis2-deploy-prod --region=europe-west1   --branch=migration/2.36.13.2   --substitutions=_IMAGE_TAG=2.36.13.2.20260820.01.b93b81d
 ```
 
-**La surcharge `docker-compose.palier.yml` est indispensable.** Elle lève deux réglages de
-production qui empêchent les versions anciennes de démarrer :
+Puis approuver dans la console, comme pour un déploiement ordinaire.
 
-| Réglage | Pourquoi il bloque |
+**La branche détermine tout.** Elle porte l'image *et* sa configuration d'exécution :
+
+| Sur la branche | Effet |
 |---|---|
-| `read_only: true` | Les images anciennes livrent l'application en archive `ROOT.war`, que Tomcat doit décompresser dans `webapps/`. Sur une racine en lecture seule il ne peut pas, sert depuis l'archive, et DHIS2 échoue à résoudre ses JAR : `URL cannot be resolved to absolute file path`. L'image 2.41 livre l'application déjà décompressée, d'où l'absence du problème sur la cible. |
-| sonde `/dhis-web-login/` | Cette application n'existe pas avant les versions récentes. La sonde échouerait sur un DHIS2 pourtant démarré, et Nginx refuserait de suivre. `/api/system/info` répond depuis les premières versions. |
+| `docker/Dockerfile` | corrige `unpackWARs` dans le `server.xml` de l'image |
+| `docker/docker-compose.override.yml` | lève `read_only`, remplace la sonde |
 
-Seul le service `dhis2` est démarré : ni Nginx ni certificat, le palier ne recevant aucun
-trafic.
+Le pipeline téléverse la surcharge si elle existe dans les sources, et **efface celle de
+la VM sinon**. Rien à renseigner, donc rien à oublier : déployer `main` restaure de
+lui-même la configuration de production.
+
+> Compose charge `docker-compose.override.yml` **automatiquement** dès qu'il jouxte le
+> fichier principal. C'est la raison de ce nom : `dhis2ctl` et `wait-healthy` voient donc
+> la même configuration que celle déployée, sans connaître son existence.
+
+### Pourquoi ces deux correctifs
+
+Le premier palier a échoué deux fois avant que la cause soit établie :
+
+```
+java.io.FileNotFoundException: URL cannot be resolved to absolute file path
+... war:file:/usr/local/tomcat/webapps/ROOT.war*/WEB-INF/lib/...
+```
+
+Le préfixe `war:file:` signale que Tomcat sert l'application **depuis l'archive**. Les
+images officielles déclarent `unpackWARs="false"` — vérifié sur `dhis2/core:2.35.14`,
+`server.xml` ligne 153. Nous étions seuls à porter `unpackWARs="true"`, dans
+`docker/server.xml`, que les branches de palier neutralisent précisément. La cible 2.41
+n'a jamais rencontré le problème parce qu'elle conserve ce fichier.
+
+> La lecture seule n'y était pour rien : sans `unpackWARs`, l'image n'aurait jamais
+> décompressé, quelles que soient les permissions. Elle le devient une fois la
+> décompression rétablie — Tomcat écrit alors dans `webapps/`. D'où les deux correctifs,
+> et dans cet ordre.
+
 
 **3. Suivre les migrations.**
 
