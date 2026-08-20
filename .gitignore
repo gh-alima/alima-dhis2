@@ -35,7 +35,15 @@ letsencrypt/
 certs/
 
 # --- Docker -------------------------------------------------------------------
+# Une surcharge Compose est, par convention, un fichier local que l'on ne
+# versionne pas — d'où cette règle.
 docker-compose.override.yml
+
+# Exception : les branches migration/* versionnent LEUR surcharge dans
+# docker/. C'est elle qui distingue un palier d'un déploiement de production,
+# et le pipeline la téléverse depuis les sources. Elle doit donc suivre la
+# branche. Sur main, ce fichier n'existe pas — son absence vaut consigne.
+!docker/docker-compose.override.yml
 
 # --- Système ------------------------------------------------------------------
 .DS_Store
