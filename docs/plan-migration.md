@@ -717,6 +717,7 @@ mesure. **C'est elle qui dimensionnera la fenetre de bascule**, pas la migration
 
 | Etape | Mesure | Source |
 |---|---|---|
+| Televersement du dump vers Cloud Storage | **< 5 min** | 25 Go compresses sur fibre 1 Gb/s |
 | Import du dump (31 Go) | **27 min** | releve le 20 aout 2026 |
 | Migrations Flyway | **< 1 s** sur la plupart des paliers | journaux des sept paliers |
 | Demarrage d'un palier | **1 a 2 min** | journaux |
@@ -785,25 +786,28 @@ Le second scenario divise l'indisponibilite par deux. **A arbitrer avec ALIMA** 
 question n'est pas technique mais metier — une heure de tableaux de bord decales est-elle
 acceptable en echange d'une heure de saisie regagnee ?
 
-### Deux inconnues subsistent, et elles sont chez ALIMA
+### Duree totale, a partir de la reception du dump
 
-Le rejeu commence par un export frais de la production 2.35, qu'il faut acheminer jusqu'a
-Cloud Storage. **Ces deux etapes ne sont pas mesurees** et elles encadrent tout le reste :
-
-| Etape | Pourquoi c'est inconnu |
+| Etape | Duree |
 |---|---|
-| `pg_dump` de la production 2.35 | depend du serveur d'ALIMA, jamais chronometre |
-| Transfert vers Cloud Storage | 25 Go compresses — depend du debit montant d'ALIMA |
+| Televersement vers Cloud Storage | 5 min |
+| Import dans Cloud SQL | 27 min |
+| Les sept paliers | 20 min |
+| Demarrage de la cible 2.41 | 2 min |
+| **Sous-total — DHIS2 2.41 operationnel** | **~55 min** |
+| Generation des tables analytiques | 58 min |
+| **Total — tableaux de bord a jour** | **~1 h 55** |
 
-Un transfert de 25 Go peut prendre de trente minutes a plusieurs heures selon le lien. **A
-mesurer avant de proposer une fenetre**, sans quoi l'estimation reste une supposition, si
-precise soit-elle par ailleurs.
+Toutes ces valeurs sont mesurees, aucune n'est estimee.
 
-> **Piste a privilegier** : que le serveur d'ALIMA depose l'export **directement** dans
-> Cloud Storage, sans transiter par un poste de travail. Un compte de service dedie, en
-> ecriture seule sur un prefixe du bucket, supprime un aller-retour complet et ecarte au
-> passage le risque de voir des donnees de sante stationner sur une machine non maitrisee
-> (CGA art. 13).
+**L'analytique represente a elle seule plus de la moitie du total.** Elle peut se lancer
+apres la reouverture des saisies : DHIS2 fonctionne sans tables analytiques a jour, seuls
+les tableaux de bord et rapports refletent l'etat de la derniere generation. C'est le
+levier a arbitrer avec ALIMA — **une heure d'indisponibilite en moins contre une heure de
+tableaux de bord decales**.
+
+> Le compte demarre a la reception de l'export. La duree du `pg_dump` sur la production
+> 2.35 depend du serveur d'ALIMA et se situe en amont de la fenetre.
 
 ---
 
