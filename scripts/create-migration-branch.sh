@@ -146,6 +146,13 @@ DOCKERFILE
 #                racine en lecture seule interdit. La cible 2.41 n'a pas ce
 #                besoin : son image livre l'application deja depliee.
 #
+#   monitoring   DHIS2 2.37 branche les metriques du pool en supposant c3p0 :
+#                'HikariDataSource cannot be cast to ComboPooledDataSource'.
+#                Notre configuration demande Hikari, le contexte Spring meurt.
+#                Couper la metrique dbpool suffit — un palier n'a rien a
+#                superviser. La cible 2.41 n'est pas touchee : elle tourne en
+#                production avec cette metrique active.
+#
 #   healthcheck  /dhis-web-login/ n'existe pas dans les versions anciennes.
 #                Releve sur 2.35 : seul /dhis-web-commons/security/login.action
 #                repond 200, tout le reste redirige en 302. On sonde donc
@@ -162,6 +169,9 @@ services:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/system/ping"]
       # Decompression du WAR puis migrations Flyway : compter large.
       start_period: 1200s
+    environment:
+      # Voir l'en-tete : metrique incompatible avec Hikari dans ces versions.
+      DHIS2_MONITORING_DBPOOL: "off"
 OVERRIDE
   ok "docker/docker-compose.override.yml cree"
 else
