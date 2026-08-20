@@ -284,6 +284,10 @@ steps:
   # Sans cette étape, un conteneur qui redémarre en boucle passerait pour un
   # succès.
   #
+  # 1800 s : Flyway met 19 s sur une base vide, mais la base de production fait
+  # 31 Go — la duree reelle est inconnue et le budget global du build est de
+  # 3600 s. Attendre ne coute rien, l etape sortant des que la sonde est verte.
+  #
   # La boucle d'attente vit dans scripts/wait-healthy.sh et non ici : écrite en
   # ligne, elle exigeait trois niveaux d'échappement imbriqués — YAML, shell
   # local, shell distant — et deux défauts s'y étaient glissés : une variable
@@ -300,7 +304,7 @@ steps:
         VM=$(cat /workspace/vm.txt)
 
         gcloud compute ssh "$${VM}" --zone=${_ZONE} --tunnel-through-iap --quiet \
-          --command "sudo ${_REMOTE_DIR}/scripts/wait-healthy.sh dhis2 600 ${_REMOTE_DIR}/docker-compose.yml"
+          --command "sudo ${_REMOTE_DIR}/scripts/wait-healthy.sh dhis2 1800 ${_REMOTE_DIR}/docker-compose.yml"
 
         echo ""
         echo "================================================================"
