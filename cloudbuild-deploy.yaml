@@ -133,7 +133,18 @@ steps:
         ls -l docker/docker-compose.yml
         ls -l scripts/
 
-        tar czf /workspace/stack.tar.gz docker/docker-compose.yml scripts
+        # Surcharge de palier. Elle n'existe QUE sur les branches migration/*,
+        # jamais sur main : sa présence dans les sources est donc, à elle seule,
+        # ce qui distingue un palier d'un déploiement de production. Aucun
+        # paramètre à renseigner, donc aucun à oublier.
+        OVERRIDE=""
+        if [ -f docker/docker-compose.override.yml ]; then
+          ls -l docker/docker-compose.override.yml
+          OVERRIDE="docker/docker-compose.override.yml"
+          echo ">>> PALIER DE MIGRATION : surcharge détectée."
+        fi
+
+        tar czf /workspace/stack.tar.gz docker/docker-compose.yml $$OVERRIDE scripts
 
         echo ""
         echo "Contenu de l'archive :"
@@ -166,6 +177,23 @@ steps:
 
         mkdir -p "$$APP_DIR"
         cp -f "$$STAGING/docker/docker-compose.yml" "$$APP_DIR/docker-compose.yml"
+
+        # Compose charge docker-compose.override.yml DE LUI-MÊME lorsqu'il se
+        # trouve à côté du fichier principal. C'est la raison du nom : la
+        # surcharge s'applique alors à toute commande lancée depuis ce
+        # répertoire — déploiement, wait-healthy, dhis2ctl — sans qu'aucun
+        # script n'ait à la connaître. Un -f explicite dans le seul
+        # deploy-stack.sh aurait fait diverger le diagnostic du déploiement.
+        #
+        # ⚠ La branche sans surcharge doit EFFACER celle qui reste. Sans ce
+        #   rm, un palier déployé puis suivi d'un retour à main laisserait la
+        #   production tourner en read_only:false, silencieusement.
+        if [ -f "$$STAGING/docker/docker-compose.override.yml" ]; then
+          cp -f "$$STAGING/docker/docker-compose.override.yml"                 "$$APP_DIR/docker-compose.override.yml"
+          echo ">>> surcharge de palier installée"
+        else
+          rm -f "$$APP_DIR/docker-compose.override.yml"
+        fi
 
         # scripts/ est remplacé en entier plutôt que fusionné : un script retiré
         # du dépôt doit disparaître de la VM, sans quoi une version obsolète y
