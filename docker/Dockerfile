@@ -11,7 +11,7 @@
 
 # Version DHIS2 — déclarée ICI et nulle part ailleurs.
 # La chaîne CI la lit dans ce fichier pour composer le tag d'image.
-ARG DHIS2_VERSION=2.41.9.1
+ARG DHIS2_VERSION=2.40.12
 FROM dhis2/core:${DHIS2_VERSION}
 
 # --- Métadonnées OCI : permettent de remonter d'une image en production au
