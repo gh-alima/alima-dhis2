@@ -71,11 +71,24 @@ RUN chmod +x /usr/local/bin/init.sh /usr/local/bin/wait-for-it.sh \
         /usr/local/tomcat/temp \
         /usr/local/tomcat/webapps
 
-# Palier de migration : retablir la decompression du WAR.
-# L'image officielle declare unpackWARs="false" ; Tomcat sert alors
-# l'application depuis l'archive et DHIS2 ne resout plus ses JAR.
-# Le grep fait echouer la construction si le sed ne mord pas.
-RUN sed -i 's/unpackWARs="false"/unpackWARs="true"/'       /usr/local/tomcat/conf/server.xml  && grep -q 'unpackWARs="true"' /usr/local/tomcat/conf/server.xml
+# Palier de migration : deplier l'archive a la construction.
+#
+# L'image livre ROOT.war ET un repertoire webapps/ROOT vide. Tomcat y voit un
+# contexte deja deploye, plus recent que l'archive, et ne la decompresse donc
+# jamais : il sert un repertoire vide en 500 ms, sans une ligne de DHIS2.
+# Corriger unpackWARs ne suffit pas - le repertoire fantome prime.
+#
+# Deplier ici plutot qu'au demarrage rend le resultat deterministe, accelere
+# nettement le demarrage, et evite au conteneur d'ecrire dans webapps.
+# Le test sur web.xml fait echouer la construction si l'archive change de
+# forme, plutot que de livrer une image qui demarre sur du vide.
+RUN cd /usr/local/tomcat/webapps  && rm -rf ROOT && mkdir ROOT && cd ROOT  && unzip -q ../ROOT.war  && rm -f ../ROOT.war  && test -f WEB-INF/web.xml  && chown -R 1000:1000 /usr/local/tomcat/webapps
+
+# Connecteur AJP : inutilise - Nginx parle HTTP - et refuse par Tomcat 8.5
+# faute de secret, ce qui produit un SEVERE a chaque demarrage. Le retirer
+# supprime un message trompeur et une surface d'attaque connue (Ghostcat).
+# Notre server.xml, utilise par la cible 2.41, n'en declare aucun.
+RUN sed -i '/protocol="AJP\/1.3"/d' /usr/local/tomcat/conf/server.xml
 
 USER 1000
 
