@@ -75,35 +75,25 @@ reconstruire. Ajouter un palier suffit à le faire apparaître.
 
 ---
 
-## Quel chemin suivre
-
-Deux options, à trancher au premier essai plutôt qu'à l'avance.
-
-**Chemin court — à tenter en premier**
+## Le chemin retenu
 
 ```text
-2.35.14 → 2.38.7.0 → 2.40.12.0 → 2.41.9.1
+2.35.14 -> 2.36.13.2 -> 2.37.10.0 -> 2.38.7.0 -> 2.39.10.1 -> 2.40.12.0 -> 2.41.9.1
 ```
 
-Quatre paliers au lieu de sept. Un [retour d'expérience de la communauté
-DHIS2](https://community.dhis2.org/t/upgrade-to-2-41/71659) décrit ce chemin comme
-fonctionnel. La documentation officielle n'interdit pas de sauter des versions ; elle
-indique seulement que les trois dernières versions majeures sont supportées.
+**Chemin complet, sept versions, parcouru le 20 aout 2026.** Aucun palier n'a echoue pour
+une raison tenant a la migration de schema elle-meme : les trois incidents rencontres
+venaient de la forme des images et de la configuration d'execution, jamais de Flyway.
 
-**Chemin complet — en repli**
+Un [chemin court](https://community.dhis2.org/t/upgrade-to-2-41/71659) etait envisage
+— `2.35.14 -> 2.38.7.0 -> 2.40.12.0 -> 2.41.9.1`, quatre paliers au lieu de sept. Il n'a
+pas ete tente, et il n'y a plus de raison de le faire : **Flyway s'est revele si rapide que
+les trois paliers economises n'auraient rien fait gagner** — moins d'une seconde de
+migration sur la plupart des versions, quelques minutes de demarrage. Le cout d'un palier
+est celui d'un demarrage de Tomcat, pas d'une transformation de donnees.
 
-```text
-2.35.14 → 2.36.13.2 → 2.37.10.0 → 2.38.7.0 → 2.39.10.1 → 2.40.12.0 → 2.41.9.1
-```
-
-À adopter **si un palier du chemin court échoue** : Flyway s'arrête, ou la vérification
-révèle une anomalie. Reprendre alors depuis la sauvegarde du palier précédent en insérant
-la version intermédiaire.
-
-Chaque palier coûte un cycle complet — restauration, démarrage, vérification. En ajouter
-par précaution allonge la migration sans rien garantir.
-
----
+Sauter des versions echangerait donc quelques minutes contre un risque non mesure. Le
+chemin complet reste celui a rejouer le jour J.
 
 ## Préparer
 
@@ -723,54 +713,112 @@ mesure. **C'est elle qui dimensionnera la fenetre de bascule**, pas la migration
 
 ---
 
-## Ce qu'il faut mesurer en chemin
+## Les mesures relevees
 
-Ces chiffres déterminent la fenêtre de bascule. Les relever palier par palier :
+Ces chiffres determinent la fenetre de bascule. Ils ne sont plus des intentions.
 
-| Mesure | Pourquoi |
-|---|---|
-| Durée des migrations Flyway | c'est l'essentiel du temps d'indisponibilité |
-| Durée de `analyticsTableUpdate` | souvent plus long que la migration elle-même |
-| Volume de la base après chaque palier | dimensionnement de Cloud SQL |
-| Taille du répertoire `files/` | durée de la copie à la bascule |
+| Mesure | Relevee | Consequence |
+|---|---|---|
+| Import du dump (31 Go) | **27 min** | poste le plus lourd apres l'analytique |
+| Migrations Flyway | **< 1 s** sur la plupart des paliers | negligeable |
+| Demarrage d'un palier | **1 a 2 min** | sept paliers = une vingtaine de minutes |
+| Taille de la base migree | **31 Go** sur 100 Go provisionnes | pas de redimensionnement a prevoir |
+| Taille du magasin de fichiers | **vide** | rien a copier |
+| `analyticsTableUpdate` | **non mesure** | ← **la seule inconnue restante** |
 
-Une estimation de fenêtre donnée avant ces mesures n'est qu'une supposition.
+**Tout le reste est connu ; l'analytique ne l'est pas.** Sur une instance DHIS2, les tables
+analytiques atteignent couramment la taille des donnees sources, parfois davantage. Relever
+deux valeurs a l'issue de la generation en cours :
+
+```bash
+# Duree : lire l'horodatage de debut et de fin
+sudo /opt/alima/dhis2/scripts/dhis2ctl.sh applog dhis-analytics-table.log
+
+# Taille de la base apres generation
+gcloud sql instances describe pg16-dhis2-prod   --format="value(currentDiskSize)" --project=alima-dhis2-prod
+```
+
+C'est cette duree qui dimensionne la fenetre, et cette taille qui arrete le dimensionnement
+definitif du disque — pas les 31 Go du dump.
+
+> La generation peut se lancer **apres** la reouverture des saisies : DHIS2 fonctionne sans
+> tables analytiques a jour, seuls les tableaux de bord et rapports le refletent. A
+> arbitrer avec ALIMA — c'est le levier principal pour raccourcir l'indisponibilite.
 
 ---
 
 ## Bascule
 
-Une fois `2.41.9.1` validé sur la copie :
-
-1. **Gel des saisies** sur la production 2.35, à l'heure convenue.
+1. **Gel des saisies** sur la production 2.35, a l'heure convenue.
 2. **Export final** de la base de production.
-3. **Rejeu de la chaîne complète** des paliers sur cet export — la durée est connue,
-   puisque mesurée.
-4. **Copie différentielle** du répertoire `files/` — seul ce qui a changé depuis la copie
-   initiale est retransféré.
-5. **Bascule du nom d'hôte** : `dhis2.alima.ngo` vers la nouvelle instance
+3. **Rejeu de la chaine complete** — procedure detaillee ci-dessus,
+   *Rejouer la migration le jour J*. Duree connue, puisque mesuree.
+4. **Bascule du nom d'hote** : `dhis2.alima.ngo` vers la nouvelle instance
    ([provisionnement, §État](provisionnement-gcp.md)).
-6. **Vérifications fonctionnelles** avec les référents, puis réouverture des saisies.
+5. **Verifications fonctionnelles** avec les referents, puis reouverture des saisies.
+6. **Generation des tables analytiques**, si le choix est fait de la reporter apres
+   reouverture.
 
-> Avant la bascule, supprimer l'enregistrement DNS résiduel de `dhis2.alima.ngo` vers
-> `34.79.172.183` — un hôte tiers sans lien avec ALIMA. Sans cela, la moitié du trafic de
-> production partirait vers un serveur non maîtrisé.
+> Avant la bascule, supprimer l'enregistrement DNS residuel de `dhis2.alima.ngo` vers
+> `34.79.172.183` — un hote tiers sans lien avec ALIMA, servant un certificat expire. Sans
+> cela, la moitie du trafic de production partirait vers un serveur non maitrise.
 
-**La production 2.35 reste intacte** jusqu'à la réouverture des saisies. En cas de
-difficulté, le retour arrière consiste à ne pas basculer le DNS.
+**La production 2.35 reste intacte** jusqu'a la reouverture des saisies. En cas de
+difficulte, le retour arriere consiste a ne pas basculer le DNS — rien a defaire.
 
 ---
 
 ## Points de vigilance
 
-**PostgreSQL 16.** Le Flyway embarqué dans DHIS2 2.41 signale au démarrage n'avoir pas été
-testé au-delà de PostgreSQL 15. Les migrations passent, mais si un palier échoue de façon
-inexpliquée, cette piste est à examiner : migrer d'abord sur PostgreSQL 15, puis monter la
-base ensuite.
+Ce que la repetition du 20 aout 2026 a reellement appris.
 
-**Extensions PostgreSQL.** `postgis`, `btree_gin` et `pg_trgm` sont créées automatiquement
-à chaque déploiement par l'étape `init-db`. Sur une base de travail créée à la main, les
-créer avant le premier palier.
+**Les images officielles ne sont pas homogenes.** Chaque version peut differer sur la forme
+livree et l'outillage present — releve :
 
-**Le magasin de fichiers ne migre pas tout seul.** Il n'est dans aucun export de base. Une
-migration réussie côté données peut laisser toutes les pièces jointes introuvables.
+| | 2.35.14 | 2.37.10.0 |
+|---|---|---|
+| Application | `ROOT.war` + un repertoire `ROOT` **vide** | `ROOT` deja depliee |
+| `unpackWARs` | `"false"` | `"false"` |
+| `unzip` | present | **absent** |
+| `curl` | **absent** | present |
+
+D'ou des tests plutot que des hypotheses dans le `Dockerfile` des paliers. Une image livree
+sous une troisieme forme fera echouer la construction — c'est voulu — plutot que de
+produire une image qui demarre sur du vide.
+
+**La transition c3p0 vers Hikari est mal finie entre 2.36 et 2.39.** En 2.37, activer la
+metrique `monitoring.dbpool` tue l'initialisation Spring
+(`HikariDataSource cannot be cast to ComboPooledDataSource`). La surcharge de palier la
+coupe. **La cible 2.41 n'est pas concernee** — ne pas propager ce reglage a `main`.
+
+**Une sonde de disponibilite ne se devine pas.** `dhis-web-login` n'existe pas dans les
+versions anciennes ; `/api/system/ping` y repond 302, ce que `curl -f` accepte. Le 302 est
+ici un bon signal : une application vide renverrait 404. En production, seul
+`/dhis-web-login/` repond 200 sans session.
+
+**Le planificateur reprend les taches en retard.** `ANALYTICS_TABLE` est planifiee du lundi
+au vendredi a midi UTC : un palier laisse en fonctionnement a cette heure declencherait une
+generation complete, longue et inutile. Passer au palier suivant des
+`All startup routines done`.
+
+**PostgreSQL 16.** Le Flyway embarque signale n'avoir pas ete teste au-dela de PostgreSQL 15.
+Les migrations sont passees sur les sept versions. Si un palier echouait de facon
+inexpliquee lors du rejeu, cette piste resterait a examiner.
+
+**Extensions PostgreSQL.** `postgis`, `btree_gin` et `pg_trgm` sont creees automatiquement a
+chaque deploiement par l'etape `init-db`. Sur une base de travail creee a la main, les creer
+avant le premier palier.
+
+**Les parametres chiffres ne survivent pas au changement de cle.** `keyEmailPassword` est
+illisible : la configuration SMTP sera a ressaisir apres la bascule. Ne **jamais** tenter
+d'aligner `dhis2-encryption-password` sur l'ancienne instance — tout ce que la nouvelle aura
+chiffre depuis deviendrait illisible a son tour.
+
+**Des tables ont fusionne en chemin.** `usercredentials` dans `userinfo` (2.38), graphiques
+et tableaux dans `visualization` (2.35), le partage en `jsonb` (2.36). Toute requete SQL
+directe sur ces objets est a reprendre — a verifier cote Power BI selon qu'il attaque la
+base ou l'API.
+
+**Une table de tags recopiee se perime.** Utiliser `./scripts/list-palier-images.sh`, qui
+interroge le registre, et le lancer **avant** d'ouvrir la fenetre : la politique de nettoyage
+purge au-dela de 30 jours.
