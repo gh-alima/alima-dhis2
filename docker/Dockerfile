@@ -80,9 +80,10 @@ RUN chmod +x /usr/local/bin/init.sh /usr/local/bin/wait-for-it.sh \
 #
 # Deplier ici plutot qu'au demarrage rend le resultat deterministe, accelere
 # nettement le demarrage, et evite au conteneur d'ecrire dans webapps.
-# Le test sur web.xml fait echouer la construction si l'archive change de
-# forme, plutot que de livrer une image qui demarre sur du vide.
-RUN cd /usr/local/tomcat/webapps  && rm -rf ROOT && mkdir ROOT && cd ROOT  && unzip -q ../ROOT.war  && rm -f ../ROOT.war  && test -f WEB-INF/web.xml  && chown -R 1000:1000 /usr/local/tomcat/webapps
+# Le controle sur dhis-service-setting fait echouer la construction si
+# l archive change de forme, plutot que de livrer une image qui demarre sur du
+# vide. DHIS2 se configure par annotations : il n a pas de WEB-INF/web.xml.
+RUN cd /usr/local/tomcat/webapps  && rm -rf ROOT && mkdir ROOT && cd ROOT  && unzip -q ../ROOT.war  && rm -f ../ROOT.war  && ls WEB-INF/lib/dhis-service-setting-*.jar  && chown -R 1000:1000 /usr/local/tomcat/webapps
 
 # Connecteur AJP : inutilise - Nginx parle HTTP - et refuse par Tomcat 8.5
 # faute de secret, ce qui produit un SEVERE a chaque demarrage. Le retirer
