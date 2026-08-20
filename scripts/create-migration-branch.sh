@@ -84,34 +84,52 @@ if [ "${AVEC_SERVER_XML}" = "0" ]; then
   sed -i "s|^COPY docker/server.xml |# Palier de migration : surcouche Tomcat neutralisée (cf. create-migration-branch.sh)\n# COPY docker/server.xml |" docker/Dockerfile
   ok "COPY de server.xml neutralise"
 
-  # Neutraliser server.xml retire aussi unpackWARs="true", que nous etions
-  # seuls a declarer : les images officielles portent unpackWARs="false"
-  # (verifie sur dhis2/core:2.35.14, server.xml ligne 153). Tomcat sert alors
-  # l'application depuis l'archive, et DHIS2 echoue a resoudre ses JAR :
-  #
-  #   java.io.FileNotFoundException: URL cannot be resolved to absolute file
-  #   path ... war:file:/usr/local/tomcat/webapps/ROOT.war*/WEB-INF/lib/...
-  #
-  # On corrige l'attribut dans le server.xml DE L'IMAGE plutot que d'imposer
-  # le notre : une seule valeur change, et la configuration reste celle que la
-  # version embarque - ce qui etait tout le propos de la neutralisation.
+  # Correctifs de palier ajoutes au Dockerfile. Ils repondent a des ecarts
+  # RELEVES sur les images officielles, non supposes :
+  #   - 2.35.14 livre ROOT.war et un repertoire ROOT vide ; Tomcat sert le vide
+  #   - 2.37.10 ne livre pas d archive du tout, ROOT y est deja depliee
+  #   - curl manque en 2.35.14, unzip manque en 2.37.10
+  # D ou des tests a chaque etape. Cf. docs/plan-migration.md.
   cat >> docker/Dockerfile <<'DOCKERFILE'
 
-# Palier de migration : retablir la decompression du WAR.
-# Les images officielles portent unpackWARs="false" ; Tomcat sert alors
-# l'application depuis l'archive et DHIS2 ne parvient pas a resoudre ses JAR.
-# Cf. scripts/create-migration-branch.sh et docs/plan-migration.md.
-USER root
-RUN sed -i 's/unpackWARs="false"/unpackWARs="true"/' \
-      /usr/local/tomcat/conf/server.xml \
- && grep -q 'unpackWARs="true"' /usr/local/tomcat/conf/server.xml
+# Preparer l'application deployee par Tomcat.
+#
+# Les images de la ligne DHIS2 ne sont PAS homogenes — releve, pas suppose :
+#
+#   2.35.14   ROOT.war + un repertoire ROOT VIDE. Tomcat voit un contexte deja
+#             deploye, ne deplie jamais l'archive, et sert le vide en 500 ms.
+#             (unpackWARs="false" dans son server.xml, ligne 153.)
+#   2.37.10   aucune archive : ROOT est deja depliee. Rien a faire.
+#
+# D'ou des tests plutot que des hypotheses. Deplier a la construction rend le
+# resultat deterministe, accelere le demarrage et evite au conteneur d'ecrire
+# dans webapps. Le controle final vaut pour les deux cas : il porte sur le JAR
+# dont l'absence provoquait l'echec d'origine
+# (« URL cannot be resolved to absolute file path ... war:file: »).
+RUN cd /usr/local/tomcat/webapps  && if [ -f ROOT.war ]; then         command -v unzip > /dev/null      || { apt-get update        && apt-get install -y --no-install-recommends unzip        && rm -rf /var/lib/apt/lists/*; } ;         rm -rf ROOT && mkdir ROOT && cd ROOT      && unzip -q ../ROOT.war      && rm -f ../ROOT.war ;     fi  && ls /usr/local/tomcat/webapps/ROOT/WEB-INF/lib/dhis-service-setting-*.jar  && chown -R 1000:1000 /usr/local/tomcat/webapps
+
+# curl, requis par la sonde de disponibilite. Absent de 2.35.14 (comme wget et
+# nc), present dans 2.37.10 : la encore, on teste. Sans lui le conteneur reste
+# indefiniment "health: starting" alors que DHIS2 fonctionne.
+RUN command -v curl > /dev/null  || { apt-get update    && apt-get install -y --no-install-recommends curl    && rm -rf /var/lib/apt/lists/*; }  && curl --version | head -1
+
+# Connecteur AJP : inutilise - Nginx parle HTTP - et refuse par Tomcat 8.5
+# faute de secret, ce qui produit un SEVERE a chaque demarrage. Le retirer
+# supprime un message trompeur et une surface d'attaque connue (Ghostcat).
+# Notre server.xml, utilise par la cible 2.41, n'en declare aucun.
+RUN sed -i '/protocol="AJP\/1.3"/d' /usr/local/tomcat/conf/server.xml
+# Connecteur AJP : inutilise - Nginx parle HTTP - et refuse par Tomcat 8.5
+# faute de secret, ce qui produit un SEVERE trompeur a chaque demarrage.
+# Notre server.xml, utilise par la cible 2.41, n en declare aucun.
+RUN sed -i '/protocol="AJP\/1.3"/d' /usr/local/tomcat/conf/server.xml
+
 USER 1000
 DOCKERFILE
-  ok "unpackWARs retabli dans le server.xml de l'image"
+  ok "correctifs de palier ajoutes au Dockerfile"
 
-  # Surcharge d'execution. Le nom n'est pas libre : Compose charge
-  # docker-compose.override.yml automatiquement lorsqu'il est a cote du
-  # fichier principal. Le pipeline le televerse s'il existe et efface celui de
+  # Surcharge d execution. Le nom n est pas libre : Compose charge
+  # docker-compose.override.yml automatiquement lorsqu il est a cote du
+  # fichier principal. Le pipeline le televerse s il existe et efface celui de
   # la VM sinon : la branche suffit a determiner la configuration deployee.
   cat > docker/docker-compose.override.yml <<'OVERRIDE'
 # =============================================================================
@@ -128,16 +146,20 @@ DOCKERFILE
 #                racine en lecture seule interdit. La cible 2.41 n'a pas ce
 #                besoin : son image livre l'application deja depliee.
 #
-#   healthcheck  /dhis-web-login/ n'existe pas dans les versions anciennes. La
-#                sonde echouait sur un DHIS2 pourtant fonctionnel, et Nginx
-#                refusait de demarrer derriere une dependance non saine.
+#   healthcheck  /dhis-web-login/ n'existe pas dans les versions anciennes.
+#                Releve sur 2.35 : seul /dhis-web-commons/security/login.action
+#                repond 200, tout le reste redirige en 302. On sonde donc
+#                /api/system/ping, present dans toutes les versions, et l'on
+#                accepte son 302 : une application vide renverrait 404, ce qui
+#                est precisement le cas a detecter. Tant que Flyway travaille,
+#                le contexte n'est pas demarre et la sonde reste rouge.
 # =============================================================================
 
 services:
   dhis2:
     read_only: false
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/system/info"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/system/ping"]
       # Decompression du WAR puis migrations Flyway : compter large.
       start_period: 1200s
 OVERRIDE
