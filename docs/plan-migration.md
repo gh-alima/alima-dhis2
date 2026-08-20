@@ -412,6 +412,53 @@ quelque chose cloche.
 
 ---
 
+## Journal des paliers
+
+### Palier 1 — 2.35.14, 20 aout 2026
+
+| Mesure | Valeur |
+|---|---|
+| Version du schema a l'arrivee du dump | **2.35.22** |
+| Migrations appliquees | 22, jusqu'a `2.35.46` |
+| Duree Flyway | **0,795 s** |
+| Demarrage complet | 89 s |
+| Version rapportee | `DHIS 2 Version: 2.35.14` |
+
+> Le dump de production etait en **2.35.22**, non en 2.35.0 comme l'audit initial
+> l'indiquait. Sans consequence : la ligne 2.35 se rattrape d'elle-meme.
+
+**Flyway est rapide, meme sur 31 Go.** Moins d'une seconde pour 22 migrations. Le poste de
+depense de la fenetre de bascule n'est donc pas la migration de schema, mais l'import du
+dump (27 min, mesure) et le premier `analyticsTableUpdate`.
+
+#### Deux avertissements releves au demarrage
+
+```
+ERROR Invalid cron expression - 0 0 * * *  ... Defaulting to Daily
+```
+
+Defaut connu de la configuration Log4j de DHIS2 2.35 pour le journal d'audit. Sans effet :
+la rotation retombe sur un rythme quotidien. Disparait avec les versions recentes.
+
+```
+WARN Could not decrypt system setting 'keyEmailPassword'
+```
+
+**A traiter.** Les parametres chiffres du dump l'ont ete avec la cle de l'ancienne
+instance ; la nouvelle utilise `dhis2-encryption-password` du Secret Manager. Le mot de
+passe SMTP stocke est donc illisible.
+
+Consequence limitee : seuls les **parametres chiffres** sont concernes, jamais les donnees
+de sante. Il faudra ressaisir la configuration SMTP apres la bascule, dans
+*Administration -> Parametres -> Courriel*. A verifier au passage : toute configuration
+OAuth ou passerelle SMS eventuellement chiffree.
+
+> Ne pas tenter d'aligner la cle sur celle de l'ancienne instance : changer
+> `dhis2-encryption-password` apres coup rendrait illisible tout ce que la nouvelle
+> instance aura chiffre depuis.
+
+---
+
 ## Ce qu'il faut mesurer en chemin
 
 Ces chiffres déterminent la fenêtre de bascule. Les relever palier par palier :
