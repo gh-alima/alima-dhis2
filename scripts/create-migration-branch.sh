@@ -82,12 +82,72 @@ ok "ARG DHIS2_VERSION=${VERSION}"
 
 if [ "${AVEC_SERVER_XML}" = "0" ]; then
   sed -i "s|^COPY docker/server.xml |# Palier de migration : surcouche Tomcat neutralisée (cf. create-migration-branch.sh)\n# COPY docker/server.xml |" docker/Dockerfile
-  ok "COPY de server.xml neutralisé"
+  ok "COPY de server.xml neutralise"
+
+  # Neutraliser server.xml retire aussi unpackWARs="true", que nous etions
+  # seuls a declarer : les images officielles portent unpackWARs="false"
+  # (verifie sur dhis2/core:2.35.14, server.xml ligne 153). Tomcat sert alors
+  # l'application depuis l'archive, et DHIS2 echoue a resoudre ses JAR :
+  #
+  #   java.io.FileNotFoundException: URL cannot be resolved to absolute file
+  #   path ... war:file:/usr/local/tomcat/webapps/ROOT.war*/WEB-INF/lib/...
+  #
+  # On corrige l'attribut dans le server.xml DE L'IMAGE plutot que d'imposer
+  # le notre : une seule valeur change, et la configuration reste celle que la
+  # version embarque - ce qui etait tout le propos de la neutralisation.
+  cat >> docker/Dockerfile <<'DOCKERFILE'
+
+# Palier de migration : retablir la decompression du WAR.
+# Les images officielles portent unpackWARs="false" ; Tomcat sert alors
+# l'application depuis l'archive et DHIS2 ne parvient pas a resoudre ses JAR.
+# Cf. scripts/create-migration-branch.sh et docs/plan-migration.md.
+USER root
+RUN sed -i 's/unpackWARs="false"/unpackWARs="true"/' \
+      /usr/local/tomcat/conf/server.xml \
+ && grep -q 'unpackWARs="true"' /usr/local/tomcat/conf/server.xml
+USER 1000
+DOCKERFILE
+  ok "unpackWARs retabli dans le server.xml de l'image"
+
+  # Surcharge d'execution. Le nom n'est pas libre : Compose charge
+  # docker-compose.override.yml automatiquement lorsqu'il est a cote du
+  # fichier principal. Le pipeline le televerse s'il existe et efface celui de
+  # la VM sinon : la branche suffit a determiner la configuration deployee.
+  cat > docker/docker-compose.override.yml <<'OVERRIDE'
+# =============================================================================
+# docker-compose.override.yml - surcharge du palier de migration
+#
+# Charge AUTOMATIQUEMENT par Compose - aucune option -f a passer. Ce fichier
+# n'existe que sur les branches migration/* ; sur main il est absent, et le
+# pipeline efface celui qui subsisterait sur la VM.
+#
+# Un palier fait migrer le schema et ne recoit aucun trafic. Deux reglages de
+# production l'empechent de demarrer :
+#
+#   read_only    Tomcat decompresse desormais ROOT.war dans webapps/, ce qu'une
+#                racine en lecture seule interdit. La cible 2.41 n'a pas ce
+#                besoin : son image livre l'application deja depliee.
+#
+#   healthcheck  /dhis-web-login/ n'existe pas dans les versions anciennes. La
+#                sonde echouait sur un DHIS2 pourtant fonctionnel, et Nginx
+#                refusait de demarrer derriere une dependance non saine.
+# =============================================================================
+
+services:
+  dhis2:
+    read_only: false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/system/info"]
+      # Decompression du WAR puis migrations Flyway : compter large.
+      start_period: 1200s
+OVERRIDE
+  ok "docker/docker-compose.override.yml cree"
 else
-  ok "COPY de server.xml conservé (--avec-server-xml)"
+  ok "COPY de server.xml conserve (--avec-server-xml)"
 fi
 
 git add docker/Dockerfile
+[ -f docker/docker-compose.override.yml ] && git add docker/docker-compose.override.yml
 git commit -q -F- <<EOF
 migration: palier DHIS2 ${VERSION}
 
