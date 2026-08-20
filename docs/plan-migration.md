@@ -533,6 +533,59 @@ que ce soit — Flyway trouvera le schema a jour.
 
 ---
 
+### Palier 4 — 2.38.7.0, 20 aout 2026
+
+Premier palier a aboutir entierement depuis le 2.36 : `All startup routines done`,
+`DHIS 2 Version: 2.38.7`, demarrage en 103 s. Le correctif dbpool tient
+(`monitoring.dbpool.enabled is disabled`).
+
+| | |
+|---|---|
+| Tomcat | 9.0.90 |
+| **Java** | **11.0.23** — bascule depuis Java 8 |
+| Duree de demarrage | 103 s |
+
+La JVM recoit desormais des `--add-opens` (`java.base/java.lang`, `java.io`, `java.util`,
+`java.util.concurrent`, `java.rmi/sun.rmi.transport`) : l'image les pose elle-meme, rien a
+regler de notre cote.
+
+#### Une migration structurante — `V2_38_35__Migrate_user_to_userinfo`
+
+```sql
+UPDATE userinfo SET username = uc.username, password = uc.password, ... FROM users AS uc
+```
+
+Les identifiants quittent `usercredentials` pour rejoindre `userinfo`. Consequence a
+verifier en recette : **toute requete SQL directe visant `users` ou `usercredentials`**
+cesse de fonctionner — export, tableau de bord, script d'exploitation.
+
+> A verifier cote **Power BI** : si la connexion passe par l'API DHIS2 (`/api/analytics`),
+> aucun impact. Si elle attaque la base directement, les requetes touchant les tables
+> d'utilisateurs sont a reprendre. C'est le genre d'ecart qui ne se voit qu'a l'usage —
+> a inscrire au plan de recette.
+
+Egalement dans ce palier : `V2_38_37` deplace les criteres de
+`trackedentityinstancefilter` vers une colonne `entityquerycriteria` en jsonb.
+
+#### Le planificateur redemarre les taches en retard
+
+```
+Scheduler started with one or more unexecuted jobs:
+Job [bIbXlsXoz2p, Analytics every day at noon] ... supposed to be: Fri Aug 14 12:00:00 UTC
+```
+
+Les taches heritees du dump ont manque leurs echeances pendant l'arret de l'ancienne
+instance. DHIS2 les signale et les reprogramme — c'est le comportement attendu.
+
+**Point de vigilance** : `ANALYTICS_TABLE` est planifiee du lundi au vendredi a midi UTC. Si
+un palier tourne a cette heure-la, une generation complete des tables analytiques peut se
+declencher — longue, inutile a ce stade, et gourmande en ressources.
+
+Ne pas laisser un palier tourner plus longtemps que necessaire : une fois
+`All startup routines done` atteint et la version confirmee, passer au suivant.
+
+---
+
 ## Ce qu'il faut mesurer en chemin
 
 Ces chiffres déterminent la fenêtre de bascule. Les relever palier par palier :
