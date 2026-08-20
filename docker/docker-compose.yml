@@ -55,12 +55,19 @@ services:
       # pare-feu n'autorise que 80/443, seul Nginx atteint ce port.
       - "127.0.0.1:8080:8080"
     healthcheck:
-      # /dhis-web-login/ répond 200 sans authentification. Ne PAS utiliser
-      # /api/system/ping ni /api/system/info : en 2.41 ils exigent une session
-      # et renvoient une redirection 302 vers la page de connexion — que
-      # `curl -f` considère comme un succès, ce qui donnerait une sonde verte
-      # même sur une application à moitié déployée.
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/dhis-web-login/"]
+      # Chemin paramétrable, car il change d'une version de DHIS2 à l'autre.
+      #
+      # Défaut : /dhis-web-login/, qui répond 200 sans authentification sur la
+      # cible 2.41. Ne PAS y mettre /api/system/ping ni /api/system/info : en
+      # 2.41 ils exigent une session et renvoient une redirection 302 — que
+      # `curl -f` accepte, ce qui donnerait une sonde verte sur une application
+      # à moitié déployée.
+      #
+      # Les paliers de migration ont besoin d'un autre chemin : l'application
+      # dhis-web-login n'existe pas dans les versions anciennes, où la sonde
+      # échouerait alors même que DHIS2 fonctionne. Renseigner HEALTH_PATH pour
+      # ces déploiements (cf. docs/plan-migration.md).
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080${HEALTH_PATH:-/dhis-web-login/}"]
       interval: 15s
       timeout: 5s
       retries: 5

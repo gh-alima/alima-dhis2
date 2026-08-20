@@ -1,0 +1,30 @@
+# =============================================================================
+# docker-compose.palier.yml — surcharge pour les paliers de migration
+#
+# À superposer au fichier principal :
+#   docker compose -f docker-compose.yml -f docker-compose.palier.yml up -d dhis2
+#
+# Un palier n'est pas un déploiement : il fait migrer le schéma, ne reçoit
+# aucun trafic, et disparaît dès l'étape suivante. Deux réglages de production
+# l'empêchent de démarrer.
+#
+#   read_only        Les images anciennes livrent l'application en archive
+#                    ROOT.war, que Tomcat doit décompresser dans webapps/. Sur
+#                    une racine en lecture seule il ne peut pas, sert depuis
+#                    l'archive, et DHIS2 échoue à résoudre ses JAR :
+#                      URL cannot be resolved to absolute file path ...
+#                      war:file:/usr/local/tomcat/webapps/ROOT.war*/WEB-INF/...
+#                    L'image 2.41 livre l'application déjà décompressée, d'où
+#                    l'absence du problème sur la cible.
+#
+#   healthcheck      /dhis-web-login/ n'existe pas avant les versions récentes.
+#                    La sonde échouerait sur une application pourtant démarrée.
+#                    /api/system/info répond depuis les premières versions.
+# =============================================================================
+
+services:
+  dhis2:
+    read_only: false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/system/info"]
+      start_period: 900s

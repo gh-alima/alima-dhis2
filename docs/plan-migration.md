@@ -341,9 +341,28 @@ gcloud sql backups list --instance=pg16-dhis2-prod --limit=5
 gcloud sql backups restore <ID> --restore-instance=pg16-dhis2-prod
 ```
 
-**2. Démarrer le palier** — déployer l'image du palier en pointant `IMAGE_TAG` sur son
-tag. Seul le service `dhis2` est nécessaire : ni Nginx ni certificat, le palier ne
-recevant aucun trafic.
+**2. Démarrer le palier** — sur la VM, sans passer par Cloud Build : un palier est une
+exécution transitoire, l'approbation et l'attente de sonde n'y ont pas d'objet.
+
+```bash
+TAG=2.36.13.2.20260820.01.b93b81d
+
+sudo sed -i "s|^IMAGE_TAG=.*|IMAGE_TAG=${TAG}|" /opt/alima/dhis2/.env
+cd /opt/alima/dhis2
+sudo docker compose -f docker-compose.yml -f docker-compose.palier.yml pull dhis2
+sudo docker compose -f docker-compose.yml -f docker-compose.palier.yml up -d dhis2
+```
+
+**La surcharge `docker-compose.palier.yml` est indispensable.** Elle lève deux réglages de
+production qui empêchent les versions anciennes de démarrer :
+
+| Réglage | Pourquoi il bloque |
+|---|---|
+| `read_only: true` | Les images anciennes livrent l'application en archive `ROOT.war`, que Tomcat doit décompresser dans `webapps/`. Sur une racine en lecture seule il ne peut pas, sert depuis l'archive, et DHIS2 échoue à résoudre ses JAR : `URL cannot be resolved to absolute file path`. L'image 2.41 livre l'application déjà décompressée, d'où l'absence du problème sur la cible. |
+| sonde `/dhis-web-login/` | Cette application n'existe pas avant les versions récentes. La sonde échouerait sur un DHIS2 pourtant démarré, et Nginx refuserait de suivre. `/api/system/info` répond depuis les premières versions. |
+
+Seul le service `dhis2` est démarré : ni Nginx ni certificat, le palier ne recevant aucun
+trafic.
 
 **3. Suivre les migrations.**
 
