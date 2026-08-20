@@ -733,6 +733,69 @@ gcloud sql instances describe pg16-dhis2-prod   --format="value(currentDiskSize)
 Cette derniere valeur arrete le dimensionnement definitif du disque — 100 Go sont
 provisionnes, la base pesait 31 Go avant l'analytique.
 
+### Ou passe l'espace — releve du 20 aout 2026
+
+| Table | Taille | Part |
+|---|---|---|
+| **`audit`** | **29 Go** | **69 %** |
+| `analytics_2025` | 5,8 Go | 14 % |
+| `analytics_2026` | 4,8 Go | 11 % |
+| `datavalue` | 2,0 Go | 5 % |
+| tout le reste | < 1 Go | — |
+| **Base totale** | **42 Go** | sur 100 Go provisionnes |
+
+Les tables analytiques coutent **11 Go**, ce qui recoupe exactement l'ecart mesure avant et
+apres leur generation (31 -> 42 Go).
+
+**Les donnees metier tiennent dans 2 Go.** Le reste est de l'historique : 29 Go de journal
+d'audit, accumules depuis la mise en service de l'instance 2.35.
+
+#### Ce que cela change pour la fenetre de bascule
+
+L'export de 25 Go compresses est, pour l'essentiel, la table `audit`. Elle pese donc sur les
+trois etapes les plus longues du jour J — export, transfert, import — dont deux ne sont
+pas encore mesurees.
+
+Deux leviers, a arbitrer **avec ALIMA** : l'historique d'audit d'une base de sante releve
+d'une politique de conservation, pas d'un choix technique.
+
+**Option A — elaguer a la source avant l'export**
+
+Ne conserver que les N derniers mois d'audit sur la production 2.35. Reduit tout ce qui
+suit, dans les memes proportions. Suppose une decision de conservation actee par ALIMA.
+
+**Option B — exporter sans les donnees d'audit, les importer apres reouverture**
+
+```bash
+pg_dump --exclude-table-data=audit ...
+```
+
+La structure de la table part avec le dump, seules les lignes restent en arriere : DHIS2
+demarre normalement. L'historique se recharge ensuite, hors fenetre, sans impact
+utilisateur. **Aucune donnee n'est perdue.**
+
+> **Condition a verifier avant de retenir l'option B** — qu'aucun palier ne transforme les
+> enregistrements d'audit, faute de quoi les lignes rechargees apres coup auraient echappe
+> a la transformation :
+>
+> ```sql
+> SELECT version, description FROM flyway_schema_history
+> WHERE description ILIKE '%audit%' ORDER BY installed_rank;
+> ```
+>
+> Zero ligne = option B sure. Verification partielle deja faite sur les images 2.37 et
+> 2.41 : aucune migration d'audit. La requete ci-dessus tranche pour les sept versions.
+
+#### Et pour la suite
+
+29 Go d'audit sur une instance de cette taille appelle une **politique de conservation**,
+independamment de la migration. DHIS2 permet de regler ce qui est audite
+(`system.audit.*`). Sans cela, la table continuera de croitre et redeviendra le premier
+poste de la base.
+
+A porter au transfert de competences plutot qu'a la bascule : c'est une decision
+d'exploitation, pas un prerequis technique.
+
 ### La generation analytique domine tout le reste
 
 Presque une heure, contre une vingtaine de minutes pour les sept paliers reunis. **C'est
