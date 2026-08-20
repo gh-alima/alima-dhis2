@@ -126,16 +126,146 @@ Deux éléments, et pas un seul :
 > Données de santé : l'export ne transite ni par messagerie ni par support amovible
 > (CGA art. 13). Convenir d'un canal à accès restreint.
 
-### 2. Restaurer sur une base de travail
+### 2. Ce que contient l'export reçu
 
-Travailler sur une base **distincte** de celle de l'instance en service, pour pouvoir
-recommencer un palier sans tout reprendre :
+Relevé sur `dhis.sql.gz` (20 août 2026), en n'inspectant que l'en-tête et les
+instructions de structure :
+
+| | |
+|---|---|
+| Taille compressée | **25 Go** |
+| Version d'origine | PostgreSQL 10.22 (Ubuntu 18.04) |
+| Format | SQL texte (blocs `COPY`), non compressé en format `custom` |
+| Extensions déclarées | `plpgsql`, `postgis` — en `CREATE EXTENSION IF NOT EXISTS` |
+| Propriétaires | aucun `OWNER TO` — export réalisé sans attribution de propriétaire |
+
+Deux conséquences favorables : les extensions se créent d'elles-mêmes à l'import, et
+l'absence de propriétaires évite d'avoir à recréer des rôles inexistants sur Cloud SQL.
+
+> ⚠ **La volumétrie dépasse largement l'estimation initiale.** Le cadrage annonçait une
+> base d'environ 50 Go ; l'export compressé en fait 25, ce qui représente couramment cinq
+> à dix fois plus une fois décompressé. Trois points en découlent, à traiter avant de
+> lancer l'import :
+>
+> - **Stockage Cloud SQL** — l'instance est provisionnée à 100 Go. L'extension
+>   automatique est active, donc l'import n'échouera pas, mais le disque grandira sans
+>   jamais rétrécir, et la facture avec lui.
+> - **Durée** — un export au format SQL texte se rejoue séquentiellement, sans
+>   parallélisme. Sur ce volume, l'import se compte en heures, pas en minutes.
+> - **Fenêtre de bascule** — la durée annoncée à ALIMA découlera de ces mesures. Ne rien
+>   avancer avant le premier import chronométré.
+>
+> Si un nouvel export peut être demandé, le réclamer au **format `custom`**
+> (`pg_dump -Fc`) : `pg_restore -j` le rejoue alors en parallèle, souvent plusieurs fois
+> plus vite.
+
+### 3. Téléverser l'export vers Cloud Storage
+
+La base n'a qu'une adresse privée : l'import passe par Cloud Storage, seul chemin
+qu'atteignent à la fois le poste et Cloud SQL. Aucun transit par la VM, dont le disque ne
+suffirait pas.
 
 ```bash
-gcloud sql databases create dhis2-migration --instance=pg16-dhis2-prod
+gcloud storage cp "C:/Users/lenovo/Downloads/dhis.sql.gz" \
+  gs://alima-dhis2-prod-dhis2-backups/import/dhis-2.35.sql.gz \
+  --project=alima-dhis2-prod
 ```
 
-### 3. Construire les images des paliers
+Compter plusieurs heures selon le débit montant. La commande reprend un transfert
+interrompu.
+
+Autoriser ensuite Cloud SQL à lire l'objet — son compte de service est distinct de celui
+de la VM :
+
+```bash
+SA=$(gcloud sql instances describe pg16-dhis2-prod \
+       --format="value(serviceAccountEmailAddress)" --project=alima-dhis2-prod)
+
+gcloud storage objects add-iam-policy-binding \
+  gs://alima-dhis2-prod-dhis2-backups/import/dhis-2.35.sql.gz \
+  --member="serviceAccount:${SA}" --role="roles/storage.objectViewer" \
+  --project=alima-dhis2-prod
+```
+
+### 4. Vider la base cible
+
+La base `dhis2` contient l'installation 2.41 créée au premier démarrage : un schéma
+complet, des métadonnées par défaut, aucune donnée ALIMA. Elle doit disparaître — importer
+par-dessus produirait des conflits de clés et un mélange des deux schémas.
+
+**Arrêter DHIS2 d'abord**, sans quoi la suppression échouera : l'application maintient des
+connexions ouvertes.
+
+```bash
+# Sur la VM
+sudo /opt/alima/dhis2/scripts/dhis2ctl.sh stop
+```
+
+```bash
+# Depuis le poste
+gcloud sql databases delete dhis2 --instance=pg16-dhis2-prod --quiet
+gcloud sql databases create dhis2 --instance=pg16-dhis2-prod
+```
+
+> Une base **unique** est réutilisée plutôt qu'une base de travail séparée : à ce
+> volume, en maintenir deux doublerait le stockage facturé. Le point de reprise entre
+> paliers est assuré par les exports de l'étape suivante, pas par une seconde base.
+
+### 5. Importer
+
+```bash
+gcloud sql import sql pg16-dhis2-prod \
+  gs://alima-dhis2-prod-dhis2-backups/import/dhis-2.35.sql.gz \
+  --database=dhis2 --project=alima-dhis2-prod
+```
+
+Cloud SQL décompresse au vol : inutile de dégziper au préalable. L'opération est longue et
+peut dépasser le délai d'attente de la commande — elle se poursuit côté serveur :
+
+```bash
+gcloud sql operations list --instance=pg16-dhis2-prod --limit=3 \
+  --format="table(name,operationType,status,startTime)"
+```
+
+**Chronométrer cette durée** : c'est la principale composante de la fenêtre de bascule.
+
+### 6. Compléter les extensions
+
+L'export crée `plpgsql` et `postgis`. Il manque `btree_gin` et `pg_trgm`, requises depuis
+DHIS2 2.38 :
+
+```bash
+# Sur la VM — seul point atteignant la base en adresse privée
+sudo bash /opt/alima/dhis2/scripts/init-database.sh
+```
+
+Le script est idempotent et affiche la liste des extensions installées.
+
+### 7. Mesurer avant de commencer
+
+```bash
+gcloud sql instances describe pg16-dhis2-prod \
+  --format="value(currentDiskSize,settings.dataDiskSizeGb)" --project=alima-dhis2-prod
+```
+
+Noter la taille obtenue : elle conditionne le dimensionnement définitif de l'instance et
+sert de référence pour mesurer la croissance à chaque palier.
+
+La base est alors prête pour le premier palier.
+
+### 8. Vérifier la présence des images
+
+Les sept images sont publiées (voir *Images publiées* ci-dessus). Confirmer que le tag du
+palier visé existe toujours avant de lancer l'étape — la politique de nettoyage peut
+l'avoir purgé si la migration s'étale :
+
+```bash
+gcloud artifacts docker images list \
+  europe-west1-docker.pkg.dev/alima-dhis2-prod/dhis2-images/dhis2-core \
+  --include-tags --project=alima-dhis2-prod | grep '^.*2\.3'
+```
+
+Le cas échéant, reconstruire depuis la branche — deux minutes :
 
 ```bash
 git checkout migration/2.35.14
@@ -143,8 +273,6 @@ gcloud builds submit --config=cloudbuild.yaml \
   --substitutions=_VCS_REF=$(git rev-parse --short HEAD) \
   --project=alima-dhis2-prod
 ```
-
-Le tag produit porte la version du palier : `2.35.14.<date>.<n°>.<commit>`.
 
 > Le déclencheur automatique ne réagit qu'aux poussées sur `main` : les branches de palier
 > se construisent à la demande, ce qui évite de saturer le registre.
@@ -158,13 +286,24 @@ Pour chaque version, dans l'ordre :
 **1. Sauvegarder l'état d'entrée** — c'est le point de reprise si le palier échoue.
 
 ```bash
-gcloud sql export sql pg16-dhis2-prod \
-  gs://alima-dhis2-prod-dhis2-backups/migration/avant-<version>.sql \
-  --database=dhis2-migration
+gcloud sql backups create --instance=pg16-dhis2-prod \
+  --description="avant palier <version>" --project=alima-dhis2-prod
 ```
 
-**2. Démarrer le palier** sur la base de travail, en pointant `DHIS2_DATABASE_NAME` vers
-`dhis2-migration`. Seul le service `dhis2` est nécessaire — ni Nginx ni certificat.
+Une **sauvegarde Cloud SQL**, et non un export logique. À ce volume, un
+`gcloud sql export sql` prendrait des heures à chaque palier et rendrait la chaîne
+impraticable. La sauvegarde repose sur un instantané du disque : quelques minutes, et une
+restauration tout aussi rapide.
+
+```bash
+# En cas d'échec du palier — revenir à l'état d'entrée
+gcloud sql backups list --instance=pg16-dhis2-prod --limit=5
+gcloud sql backups restore <ID> --restore-instance=pg16-dhis2-prod
+```
+
+**2. Démarrer le palier** — déployer l'image du palier en pointant `IMAGE_TAG` sur son
+tag. Seul le service `dhis2` est nécessaire : ni Nginx ni certificat, le palier ne
+recevant aucun trafic.
 
 **3. Suivre les migrations.**
 
