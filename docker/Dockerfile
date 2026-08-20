@@ -90,6 +90,12 @@ RUN cd /usr/local/tomcat/webapps \
  && ls WEB-INF/lib/dhis-service-setting-*.jar \
  && chown -R 1000:1000 /usr/local/tomcat/webapps
 
+# curl, requis par la sonde de disponibilite : les images anciennes n'en
+# livrent pas (ni wget, ni nc). Sans lui la sonde echoue toujours, et le
+# conteneur reste indefiniment "health: starting" alors que DHIS2 tourne.
+# L'image cible 2.41, elle, embarque curl.
+RUN apt-get update  && apt-get install -y --no-install-recommends curl  && rm -rf /var/lib/apt/lists/*  && curl --version | head -1
+
 # Connecteur AJP : inutilise - Nginx parle HTTP - et refuse par Tomcat 8.5
 # faute de secret, ce qui produit un SEVERE a chaque demarrage. Le retirer
 # supprime un message trompeur et une surface d'attaque connue (Ghostcat).
