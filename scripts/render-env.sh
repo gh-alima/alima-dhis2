@@ -20,15 +20,10 @@ IMAGE_TAG=""
 REGISTRY=""
 OUTPUT="/opt/alima/dhis2/.env"
 
-# Chemin de la sonde de disponibilite. Il change d'une version de DHIS2 a
-# l'autre : dhis-web-login n'existe pas dans les versions anciennes, ou la
-# sonde echouerait alors meme que l'application fonctionne.
-HEALTH_PATH="/dhis-web-login/"
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --tag)          IMAGE_TAG="$2";   shift 2 ;;
-    --health-path)  HEALTH_PATH="$2"; shift 2 ;;
     --registry) REGISTRY="$2";    shift 2 ;;
     --output)   OUTPUT="$2";      shift 2 ;;
     # Accepté et ignoré : conserve la compatibilité avec d'anciens appels.
@@ -53,7 +48,7 @@ secret() {
   }
 }
 
-echo "Génération de ${OUTPUT} (production, tag ${IMAGE_TAG}, sonde ${HEALTH_PATH})"
+echo "Génération de ${OUTPUT} (production, tag ${IMAGE_TAG})"
 
 DB_HOST="$(secret dhis2-db-host)"
 DB_USER="$(secret dhis2-db-user)"
@@ -137,7 +132,6 @@ DEBUG=false
 INSECURE=false
 
 TLS_CERT_DIR=/etc/letsencrypt
-HEALTH_PATH=${HEALTH_PATH}
 BACKUP_BUCKET=gs://$(gcloud config get-value project 2>/dev/null)-dhis2-backups
 EOF
 
