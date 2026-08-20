@@ -12,15 +12,19 @@
 #                racine en lecture seule interdit. La cible 2.41 n'a pas ce
 #                besoin : son image livre l'application deja depliee.
 #
-#   healthcheck  /dhis-web-login/ n'existe pas dans les versions anciennes. La
-#                sonde echouait sur un DHIS2 pourtant fonctionnel, et Nginx
-#                refusait de demarrer derriere une dependance non saine.
+#   healthcheck  /dhis-web-login/ n'existe pas dans les versions anciennes.
+#                Releve sur 2.35 : seul /dhis-web-commons/security/login.action
+#                repond 200, tout le reste redirige en 302. On sonde donc
+#                /api/system/ping, present dans toutes les versions, et l'on
+#                accepte son 302 : une application vide renverrait 404, ce qui
+#                est precisement le cas a detecter. Tant que Flyway travaille,
+#                le contexte n'est pas demarre et la sonde reste rouge.
 # =============================================================================
 
 services:
   dhis2:
     read_only: false
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/system/info"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/system/ping"]
       # Decompression du WAR puis migrations Flyway : compter large.
       start_period: 1200s
