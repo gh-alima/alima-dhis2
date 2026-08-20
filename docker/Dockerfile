@@ -71,6 +71,12 @@ RUN chmod +x /usr/local/bin/init.sh /usr/local/bin/wait-for-it.sh \
         /usr/local/tomcat/temp \
         /usr/local/tomcat/webapps
 
+# Palier de migration : retablir la decompression du WAR.
+# L'image officielle declare unpackWARs="false" ; Tomcat sert alors
+# l'application depuis l'archive et DHIS2 ne resout plus ses JAR.
+# Le grep fait echouer la construction si le sed ne mord pas.
+RUN sed -i 's/unpackWARs="false"/unpackWARs="true"/'       /usr/local/tomcat/conf/server.xml  && grep -q 'unpackWARs="true"' /usr/local/tomcat/conf/server.xml
+
 USER 1000
 
 ENV DHIS2_HOME=/opt/dhis2
