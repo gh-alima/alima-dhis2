@@ -18,6 +18,7 @@ co-localisé à Cloud SQL PostgreSQL 16 managé.
 | Travailler en local sur l'image ou la configuration | [Démarrage local](#démarrage-local) |
 | Comprendre un choix technique avant de le modifier | [`docs/architecture-et-cicd.md`](docs/architecture-et-cicd.md) |
 | Recréer l'infrastructure | [`docs/provisionnement-gcp.md`](docs/provisionnement-gcp.md) |
+| Faire monter la base de 2.35 à 2.41 | [Migration par paliers](#migration-par-paliers), puis [`docs/plan-migration.md`](docs/plan-migration.md) |
 
 **Une règle vaut d'être connue avant tout le reste** : les commandes `gcloud` se lancent
 depuis un poste de travail, jamais depuis la VM. Le compte de service de la VM est
@@ -45,6 +46,8 @@ d'administration y échouera.
 ├── configuration/             métadonnées DHIS2 à charger dans l'image
 ├── scripts/
 │   ├── 01-setup-gcp.sh        provisionnement GCP — source de vérité
+│   ├── create-migration-branch.sh  branche d'un palier de migration
+│   ├── import-dump.sh         import d'un export de production dans Cloud SQL
 │   ├── 02-setup-triggers.sh   déclencheurs Cloud Build
 │   ├── install-vm.sh          préparation de la VM (une seule fois)
 │   ├── dhis2ctl.sh            exploitation courante sur la VM
@@ -57,6 +60,7 @@ d'administration y échouera.
 │   └── 99-cleanup-gcp.sh      suppression de l'infrastructure
 └── docs/
     ├── aide-memoire.md        commandes du quotidien — à garder sous la main
+    ├── plan-migration.md      montée 2.35 → 2.41 par paliers
     ├── architecture-et-cicd.md   conception et décisions
     └── provisionnement-gcp.md    création de l'infrastructure, pas à pas
 ```
@@ -109,6 +113,54 @@ En CI, `cloudbuild.yaml` fait la même chose et pousse dans Artifact Registry av
 
 ---
 
+## Migration par paliers
+
+La montée de 2.35 à 2.41 se fait version par version, chacune appliquant ses propres
+migrations de schéma. Une branche par palier, épinglée sur le dernier correctif publié de
+sa ligne :
+
+| Branche | Version |
+|---|---|
+| `migration/2.35.14` | 2.35.14 |
+| `migration/2.36.13.2` | 2.36.13.2 |
+| `migration/2.37.10.0` | 2.37.10.0 |
+| `migration/2.38.7.0` | 2.38.7.0 |
+| `migration/2.39.10.1` | 2.39.10.1 |
+| `migration/2.40.12.0` | 2.40.12.0 |
+| **`main`** | **2.41.9.1** — cible |
+
+**Les images de tous les paliers sont construites et publiées** dans Artifact Registry.
+Les lister :
+
+```bash
+gcloud artifacts docker images list \
+  europe-west1-docker.pkg.dev/alima-dhis2-prod/dhis2-images/dhis2-core \
+  --include-tags --project=alima-dhis2-prod
+```
+
+Reconstruire un palier, ou en ajouter un :
+
+```bash
+git checkout migration/2.38.7.0
+gcloud builds submit --config=cloudbuild.yaml \
+  --substitutions=_VCS_REF=$(git rev-parse --short HEAD) \
+  --project=alima-dhis2-prod
+
+# Créer la branche d'une version absente de la liste
+./scripts/create-migration-branch.sh 2.36.13.2
+```
+
+Une branche de palier ne diffère de `main` que par deux lignes du `Dockerfile` : la version
+de l'image de base, et la neutralisation de `server.xml` — inutile sur un palier, qui ne
+reçoit aucun trafic.
+
+Le déclencheur automatique ne réagit qu'aux poussées sur `main` : les branches de palier
+se construisent à la demande, sans jamais interférer avec la production.
+
+Déroulé complet : [`docs/plan-migration.md`](docs/plan-migration.md).
+
+---
+
 ## Déploiement
 
 Construction et déploiement sont **deux opérations distinctes**. On déploie un tag déjà
@@ -132,14 +184,14 @@ arrière consiste à relancer ce même déploiement avec le tag précédent.
 
 ## Provisionnement
 
-> **État au 14 août 2026 — infrastructure créée.** VM `vm-dhis2-app` en service, adresse
-> publique **`34.38.89.219`**, Cloud SQL PostgreSQL 16 en IP privée. En attente de
-> l'enregistrement DNS côté ALIMA, préalable au certificat TLS et au premier déploiement.
-> État détaillé : [`docs/provisionnement-gcp.md`](docs/provisionnement-gcp.md).
+> **L'infrastructure est en place et l'instance en service** sur
+> <https://dhis2-test.alima.ngo>. VM `vm-dhis2-app` — adresse publique `34.38.89.219`,
+> Cloud SQL PostgreSQL 16 en IP privée.
 
-📖 **Mode opératoire complet, pas à pas :
+**Mode opératoire complet :
 [`docs/provisionnement-gcp.md`](docs/provisionnement-gcp.md)** — installation de gcloud,
-authentification, facturation, exécution, vérifications et écarts connus.
+authentification, facturation, exécution et vérifications. Utile pour recréer
+l'infrastructure ou comprendre ce qui a été mis en place.
 
 En résumé :
 
