@@ -11,7 +11,7 @@
 
 # Version DHIS2 — déclarée ICI et nulle part ailleurs.
 # La chaîne CI la lit dans ce fichier pour composer le tag d'image.
-ARG DHIS2_VERSION=2.41.9.1
+ARG DHIS2_VERSION=2.36.13.2
 FROM dhis2/core:${DHIS2_VERSION}
 
 # --- Métadonnées OCI : permettent de remonter d'une image en production au
@@ -41,7 +41,8 @@ USER root
 #   la ligne ci-dessous pour ces paliers. Ils ne servent qu'à faire migrer le
 #   schéma et n'ont pas besoin du réglage fin du connecteur.
 #   Cf. docs/architecture-et-cicd.md §9.0
-COPY docker/server.xml      /usr/local/tomcat/conf/server.xml
+# Palier de migration : surcouche Tomcat neutralisée (cf. create-migration-branch.sh)
+# COPY docker/server.xml      /usr/local/tomcat/conf/server.xml
 COPY docker/setenv.sh       /usr/local/tomcat/bin/setenv.sh
 
 # --- Entrypoint : génère dhis.conf puis démarre Tomcat -----------------------
