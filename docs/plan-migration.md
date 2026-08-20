@@ -222,21 +222,40 @@ gcloud sql databases create dhis2 --instance=pg16-dhis2-prod
 
 ### 5. Importer
 
+> **L'import natif de Cloud SQL ne convient pas ici.** Il rejoue le fichier tel quel et
+> s'arrête sur :
+>
+> ```text
+> ERROR:  must be owner of extension plpgsql
+> ```
+>
+> `pg_dump` écrit un `COMMENT ON EXTENSION` après chaque `CREATE EXTENSION`. Commenter une
+> extension exige d'en être propriétaire — or `plpgsql` appartient au superutilisateur
+> interne, que Cloud SQL n'accorde à personne. Deux lignes en cause dans tout l'export, ne
+> portant qu'un libellé, sans aucun effet fonctionnel.
+>
+> Les retirer du fichier supposerait de le décompresser, le filtrer, le recompresser et le
+> renvoyer : plusieurs heures pour deux lignes.
+
+L'import se fait donc depuis la VM, en filtrant le flux à la volée — le fichier n'est
+jamais écrit sur disque, celui de la VM n'y suffirait pas.
+
 ```bash
-gcloud sql import sql pg16-dhis2-prod \
+# Sur la VM. L'import dure des heures : nohup le protège d'une déconnexion SSH.
+sudo nohup /opt/alima/dhis2/scripts/import-dump.sh \
   gs://alima-dhis2-prod-dhis2-backups/import/dhis-2.35.sql.gz \
-  --database=dhis2 --project=alima-dhis2-prod
+  > /var/log/dhis2-import.log 2>&1 &
+
+tail -f /var/log/dhis2-import.log
 ```
 
-Cloud SQL décompresse au vol : inutile de dégziper au préalable. L'opération est longue et
-peut dépasser le délai d'attente de la commande — elle se poursuit côté serveur :
+Le script refuse de démarrer si la base contient déjà des tables : importer par-dessus
+produirait des conflits de clés, révélés des dizaines de milliers de lignes plus loin. En
+cas d'import interrompu, revenir à l'étape 4 avant de relancer.
 
-```bash
-gcloud sql operations list --instance=pg16-dhis2-prod --limit=3 \
-  --format="table(name,operationType,status,startTime)"
-```
-
-**Chronométrer cette durée** : c'est la principale composante de la fenêtre de bascule.
+Il affiche en fin de parcours la **durée**, le nombre de tables, la taille de la base et
+les extensions installées. **Noter la durée** : c'est la principale composante de la
+fenêtre de bascule.
 
 ### 6. Compléter les extensions
 

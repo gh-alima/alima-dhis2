@@ -47,6 +47,7 @@ d'administration y échouera.
 ├── scripts/
 │   ├── 01-setup-gcp.sh        provisionnement GCP — source de vérité
 │   ├── create-migration-branch.sh  branche d'un palier de migration
+│   ├── import-dump.sh         import d'un export de production dans Cloud SQL
 │   ├── 02-setup-triggers.sh   déclencheurs Cloud Build
 │   ├── install-vm.sh          préparation de la VM (une seule fois)
 │   ├── dhis2ctl.sh            exploitation courante sur la VM
