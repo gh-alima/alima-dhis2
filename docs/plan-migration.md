@@ -592,6 +592,74 @@ Passe sans incident, sans correctif supplementaire.
 
 ---
 
+### Palier 6 — 2.40.12.0, 20 aout 2026
+
+Passe sans incident. Dernier palier avant la cible.
+
+---
+
+### Cible — 2.41.9.1
+
+Ce deploiement ne ressemble a aucun des precedents : il part de **`main`**, qui ne porte
+aucune surcharge. La configuration de production reprend ses droits d'un seul coup.
+
+| | Paliers | Cible |
+|---|---|---|
+| `read_only` | leve | **`true`** |
+| Sonde | `/api/system/ping` | **`/dhis-web-login/`** |
+| Metrique dbpool | coupee | **active** |
+| Nginx | jamais demarre | **demarre**, TLS compris |
+
+Quatre changements simultanes, dont trois ineprouves depuis le debut de la migration.
+**Prendre un point de reprise avant celui-ci plus qu'avant tout autre.**
+
+#### Deroulement
+
+```bash
+git checkout main && git pull
+
+# Reconstruire : l'image 2.41 existante date d'avant les corrections de main.
+# Elle serait fonctionnellement identique, mais son tag ne designerait pas le
+# commit reellement deploye — traçabilite perdue au moment ou elle compte le plus.
+gcloud builds submit --config=cloudbuild.yaml   --substitutions=_VCS_REF=$(git rev-parse --short HEAD)   --project=alima-dhis2-prod
+
+gcloud sql backups create --instance=pg16-dhis2-prod   --description="apres palier 2.40.12.0, avant la cible 2.41.9.1"   --project=alima-dhis2-prod
+
+gcloud builds triggers run dhis2-deploy-prod --region=europe-west1   --branch=main --substitutions=_IMAGE_TAG=<tag>
+```
+
+Le journal de deploiement ne doit **pas** afficher `>>> PALIER DE MIGRATION`. Son absence
+confirme que la surcharge n'a pas ete televersee et que celle restee sur la VM a bien ete
+effacee.
+
+#### A verifier au demarrage
+
+```bash
+sudo /opt/alima/dhis2/scripts/dhis2ctl.sh status
+sudo /opt/alima/dhis2/scripts/dhis2ctl.sh applog dhis.log | grep -iE "pool|Version|startup routines"
+```
+
+| Controle | Attendu | Si l'attendu manque |
+|---|---|---|
+| `DHIS 2 Version` | `2.41.9.1` | mauvais tag deploye |
+| `All startup routines done` | present | lire l'erreur au-dessus |
+| `connection pool max size` | **`40`**, pas `null` | clef Hikari a corriger dans `init.sh` |
+| Metrique dbpool | pas de `ClassCastException` | c'est elle qui tuait le 2.37 |
+| `dhis2ctl status` | `dhis2` **et** `dhis2-nginx` sains | Nginx demarre pour la premiere fois du cycle |
+| <https://dhis2-test.alima.ngo> | page de connexion | voir `dhis2ctl cert` |
+
+#### Une fois la cible en service
+
+1. **Ressaisir la configuration SMTP** — `keyEmailPassword` ne se dechiffre pas (cf. palier 1).
+2. **Lancer `analyticsTableUpdate`** depuis *Administration -> Planificateur*, puis **relever
+   la taille de la base**. C'est cette valeur, et non les 31 Go, qui determine le
+   dimensionnement definitif du disque.
+3. **Valider Power BI** — en particulier si la connexion attaque la base directement :
+   `usercredentials` a fusionne dans `userinfo` au palier 2.38 (cf. palier 4).
+4. **Retirer l'enregistrement DNS residuel** `34.79.172.183` avant la bascule de production.
+
+---
+
 ## Ce qu'il faut mesurer en chemin
 
 Ces chiffres déterminent la fenêtre de bascule. Les relever palier par palier :
