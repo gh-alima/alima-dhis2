@@ -806,8 +806,13 @@ les tableaux de bord et rapports refletent l'etat de la derniere generation. C'e
 levier a arbitrer avec ALIMA — **une heure d'indisponibilite en moins contre une heure de
 tableaux de bord decales**.
 
-> Le compte demarre a la reception de l'export. La duree du `pg_dump` sur la production
-> 2.35 depend du serveur d'ALIMA et se situe en amont de la fenetre.
+> Le compte demarre a la reception de l'export. Sa production sur le serveur 2.35 se situe
+> en amont de la fenetre et releve d'ALIMA — c'est une operation qu'ils ont deja menee pour
+> fournir l'export du 20 aout, de sorte que l'ordre de grandeur leur est connu.
+
+> **Le jour J ne fait que rejouer cette sequence sur un export plus recent.** Rien d'autre
+> ne change : memes images, memes paliers, meme procedure. Le nouvel export ne sert qu'a
+> integrer les saisies effectuees depuis celui de la repetition.
 
 ---
 
